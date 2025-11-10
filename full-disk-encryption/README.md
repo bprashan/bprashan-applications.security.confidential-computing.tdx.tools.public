@@ -350,7 +350,7 @@ Note that the TD image using FDE currently only supports Ubuntu 24.04.
             sudo ln -f /lib/x86_64-linux-gnu/libm-2.39.a /lib/x86_64-linux-gnu/libm.a
             ```
 
-2. [On Preparation Host] Create TD image TD<sub>W</sub> with workload, a dummy key used for FDE, and key pair used for key retrieval from Trustee KBS:
+2. [On Preparation Host] Create TD image TD<sub>W</sub> with workload, root file system encryption key used for FDE, and key pair used for key retrieval from Trustee KBS:
     - Clone Canonical's Intel TDX repository and patch the TD launch script:
         ```
         git clone -b 3.1 https://github.com/canonical/tdx.git canonical-tdx
@@ -383,11 +383,6 @@ Note that the TD image using FDE currently only supports Ubuntu 24.04.
         openssl rsa -in $PWD/data/sk_kr.pem -outform PEM -pubout -out $PWD/data/pk_kr.pem
         ```
 
-    - Create dummy key used for initial FDE:
-        ```
-        openssl rand -hex 32 > data/tmp_k_rfs
-        ```
-
     - Download OVMF:
         ```
         wget https://launchpad.net/~kobuk-team/+archive/ubuntu/tdx-release/+files/ovmf_2024.02-3+tdx1.0_all.deb -P data/
@@ -405,20 +400,20 @@ Note that the TD image using FDE currently only supports Ubuntu 24.04.
             -p $PWD/canonical-tdx/guest-tools/image/tdx-guest-ubuntu-24.04-generic.qcow2 \
             -e $PWD/tools/image/tdx-guest-ubuntu-24.04-encrypted.img \
             -f $PWD/data/pk_kr.pem \
-            -d $PWD/data/tmp_k_rfs \
+            -k $k_RFS \
             -c $KBS_CERT_PATH \
             -i $KBS_k_PATH \
             -u $KBS_URL
         ```
 
-        Note: The dummy TD image TD<sub>W</sub> requires enough disk space for the following pieces: (1) space for data from the (enriched) base image TD<sub>B</sub>, (2) space for data generated at runtime, and (3) space for encryption overhead of approximately 1GB.
+        Note: The TD image TD<sub>W</sub> requires enough disk space for the following pieces: (1) space for data from the (enriched) base image TD<sub>B</sub>, (2) space for data generated at runtime, and (3) space for encryption overhead of approximately 1GB.
         By default, we allocate 10GB for the root file system partition, 2GB for the boot partition, and 101MB for BIOS/EFI resulting in of total image size of approximately 12GB.
         The size of the root file system and boot partitions can be adjusted via command line attributes during the `fde-encrypt_image.sh` invocation.
         See `sudo tools/image/fde-encrypt_image.sh -h` for more details.
 
         In more detail, this script:
         - creates a completely new TD image with multiple partitions,
-        - creates a LUKS2 encrypted partition using a hardcoded dummy key,
+        - creates a LUKS2 encrypted partition using provided root file system encryption key (k<sub>RFS</sub>),
         - formats the partitions,
         - fills the encrypted partition with data from the base image TD<sub>B</sub> and FDE binaries,
         - enrolls the KBS URL, the key path corresponding to root file system encryption key (<sub>KBS_k_PATH</sub>) to be stored in Hashicorp Vault, and PR_KR into an OVMF image.
@@ -456,7 +451,7 @@ Note that the TD image using FDE currently only supports Ubuntu 24.04.
     ```
 
     During boot, FDE Agent creates a TD Quote using a hash of PK<sub>KR</sub> as report data.
-    When user later generates the actual root file encryption key (Key<sub>RFS</sub>) and sends the key to KBS, it will check if the hash of PK<sub>KR</sub> is contained in the received TD Quote.
+    When user later sends the root file encryption key (Key<sub>RFS</sub>) to KBS, it will check if the hash of PK<sub>KR</sub> is contained in the received TD Quote.
 
     The boot will be stopped automatically after an export command is print.
     Example output:
@@ -480,12 +475,7 @@ Note that the TD image using FDE currently only supports Ubuntu 24.04.
     export QUOTE=<base64 encoded TD quote>
     ```
 
-6. [On Preparation Host] Generate root file system encryption key (k<sub>RFS</sub>).
-    ```
-    k_RFS=$(openssl enc -aes-256-cbc -pbkdf2 -iter 100000 -k secret -P -md sha256 | grep "key=" | cut -d'=' -f2)
-    ```
-
-7. [**On Preparation Host**] Register TD<sub>W</sub> at Trustee KBS by creating an attestation policy based on the TD Quote, and store the actual root file system encryption key (k<sub>RFS</sub>):
+6. [**On Preparation Host**] Register TD<sub>W</sub> at Trustee KBS by creating an attestation policy based on the TD Quote, and store the actual root file system encryption key (k<sub>RFS</sub>):
 
     - Send the TD quote retrieved in the last step to the Trustee KBS:
 
@@ -504,18 +494,15 @@ Note that the TD image using FDE currently only supports Ubuntu 24.04.
         - generates an attestation policy based on the extracted TD attributes, which the Trustee KBS later used to check the validity of a key retrieval request
         - stores the file system encryption key (k<sub>RFS</sub>) in KBS.
 
-8. [On Preparation Host] Re-encrypt TD<sub>W</sub> with the root file system encryption key (k<sub>RFS</sub>), and update GRUB configuration to boot in TD_FDE_BOOT mode:
+7. [On Preparation Host] Update GRUB configuration to boot in TD_FDE_BOOT mode:
     ```
     sudo tools/image/fde-encrypt_image.sh TD_FDE_BOOT \
         -p $PWD/tools/image/tdx-guest-ubuntu-24.04-encrypted.img \
         -e $PWD/tools/image/tdx-guest-ubuntu-24.04-encrypted.img \
-        -d $PWD/data/tmp_k_rfs \
         -k $k_RFS
     ```
 
-    In more detail, this script:
-    - re-encrypts the root filesystem partition using the actual encryption key (k<sub>RFS</sub>) retrieved from Trustee KBS, replacing the initial dummy key,
-    - updates the GRUB kernel command line to change `td-boot-mode=GET_QUOTE` to `td-boot-mode=TD_FDE_BOOT`.
+    This script updates the GRUB kernel command line to change `td-boot-mode=GET_QUOTE` to `td-boot-mode=TD_FDE_BOOT`.
 
     Script will print the output image path. The OVMF file (`OVMF_FDE.fd`) from step 2 remains unchanged and will be used for the final boot. The boot mode is controlled by the `td-boot-mode` kernel parameter in GRUB.
 

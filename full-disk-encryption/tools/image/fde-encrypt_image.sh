@@ -12,7 +12,7 @@
 # - cleanup_get_quote: Cleans up any remnants from a previous run, including unmounting partitions, disconnecting devices, and removing temporary files.
 # - create_image: Creates an empty image file of the calculated size based on the specified partition sizes.
 # - create_partitions: Sets up the partition layout for BIOS, UEFI, boot, and root filesystem in the created image and maps it to a loop device.
-# - create_luks_partition: Encrypts the root partition with LUKS using a dummy key and opens it to a virtual device.
+# - create_luks_partition: Encrypts the root partition with LUKS using provided key and opens it to a virtual device.
 # - format_partitions: Formats the EFI, boot, and decrypted root partitions.
 # - fill_rootfs: Copies data from the base image to the root partition, mounts necessary partitions, and sets up the root filesystem.
 # - close_partitions: Closes the virtual device providing decrypted access to the root partition and detaches the loop device.
@@ -20,7 +20,7 @@
 #
 # TD_FDE_BOOT Boot Mode
 # - cleanup_td_fde_boot: Cleans up any remnants from a previous run, including unmounting partitions and disconnecting devices.
-# - reencrypt_luks_partition: Re-encrypts the existing LUKS partition with the provided key, updates GRUB configuration for TD_FDE_BOOT mode..
+# - update_grub_boot_mode: Updates GRUB configuration for TD_FDE_BOOT mode.
 
 MY_PATH="$(dirname "$(readlink -f "$0")")"
 pushd "${MY_PATH}"
@@ -137,9 +137,6 @@ function cleanup_td_fde_boot() {
         done
 
     fi
-
-    # Remove named pipes
-    rm -f /tmp/key_old_fifo /tmp/key_new_fifo
 }
 
 function usage() {
@@ -147,18 +144,17 @@ function usage() {
 Usage: $(basename "$0") <TD boot mode> [OPTION]...
 
 Boot modes:
-    GET_QUOTE       Perform dummy encryption, which is used to retrieve TD quote from TD.
-    TD_FDE_BOOT     Perform encryption with provided key and updates GRUB configuration for TD_FDE_BOOT mode.
+    GET_QUOTE       Perform encryption, which is used to retrieve TD quote from TD.
+    TD_FDE_BOOT     Update GRUB configuration for TD_FDE_BOOT mode.
 
 Options:
     -c <KBS_CERT_PATH>      Path to TLS certificate of Trustee KBS; mandatory for TD boot mode \"GET_QUOTE\", forbidden for TD boot mode \"TD_FDE_BOOT\"
     -p <PATH_IMG_IN>        Path to the input image; mandatory for TD boot mode \"GET_QUOTE\" and \"TD_FDE_BOOT\"
     -e <PATH_IMG_OUT>       Path to the output image; optional for TD boot mode \"GET_QUOTE\" and \"TD_FDE_BOOT\"; default is \"GET_QUOTE\" added as a postfix for \"GET_QUOTE\" and \"TD_FDE_BOOT\" added as a postfix for \"TD_FDE_BOOT\".
-    -f <PK_KR_PATH>         Path to the public key from key pair used for key retrieval
+    -f <PK_KR_PATH>         Path to the public key from key pair used for key retrieval; mandatory for TD boot mode \"GET_QUOTE\", forbidden for TD boot mode \"TD_FDE_BOOT\"
     -u <KBS_URL>            URL of Trustee KBS; mandatory for TD boot mode \"GET_QUOTE\", forbidden for TD boot mode \"TD_FDE_BOOT\"
-    -k <K_RFS_HEX>          Key for encryption of root filesystem in hex encoding; mandatory for TD boot mode \"TD_FDE_BOOT\", forbidden for TD boot mode \"GET_QUOTE\"
+    -k <K_RFS_HEX>          Key for encryption of root filesystem in hex encoding; mandatory for TD boot mode \"GET_QUOTE\" and \"TD_FDE_BOOT\"
     -i <K_PATH>             Path used by Trustee KBS for root filesystem encryption key; mandatory for TD boot mode \"GET_QUOTE\", forbidden for TD boot mode \"TD_FDE_BOOT\"
-    -d <TMP_K_RFS>          Path to store/read the dummy key used for encryption of root filesystem; mandatory for TD boot mode \"GET_QUOTE\" and \"TD_FDE_BOOT\"
 
     -r <SIZE_PART_ROOTFS>   Size of root filesystem partition; optional for TD boot mode \"GET_QUOTE\", forbidden for TD boot mode \"TD_FDE_BOOT\"; default is 10GB
     -b <SIZE_PART_BOOT>     Size of boot partition; optional for TD boot mode \"GET_QUOTE\", forbidden for TD boot mode \"TD_FDE_BOOT\"; default is 2GB
@@ -193,7 +189,7 @@ function process_args() {
     TD_BOOT_MODE=$1
     shift
 
-    while getopts "h:r:b:p:k:i:u:c:e:f:d:" option; do
+    while getopts "h:r:b:p:k:i:u:c:e:f:" option; do
         case "$option" in
         r) SIZE_PART_ROOTFS=$OPTARG ;;
         b) SIZE_PART_BOOT=$OPTARG ;;
@@ -204,7 +200,6 @@ function process_args() {
         c) KBS_CERT_PATH=$OPTARG ;;
         e) PATH_IMG_OUT=$OPTARG ;;
         f) PK_KR_PATH=$OPTARG ;;
-        d) TMP_K_RFS=$OPTARG ;;
         h)
             usage
             exit 0
@@ -265,12 +260,7 @@ check_params_empty() {
 
 # Check validity of provided arguments
 function check_args_env() {
-    check_params_filled PATH_IMG_IN TMP_K_RFS
-
-    if [ ! -f "$TMP_K_RFS" ]; then
-        echo "Cannot find file with dummy key used for the initial encryption of root file system at \"$TMP_K_RFS\"."
-        exit 1
-    fi
+    check_params_filled PATH_IMG_IN
 
     if [ ! -f "$PATH_IMG_IN" ]; then
         echo "Input image not present at \"$PATH_IMG_IN\"."
@@ -278,8 +268,7 @@ function check_args_env() {
     fi
 
     if [[ $TD_BOOT_MODE == "GET_QUOTE" ]]; then
-        check_params_filled KBS_CERT_PATH PK_KR_PATH KBS_URL K_PATH
-        check_params_empty K_RFS_HEX 
+        check_params_filled KBS_CERT_PATH PK_KR_PATH KBS_URL K_PATH K_RFS_HEX
 
         if [ ! -f "$PK_KR_PATH" ]; then
             echo "Public key from key pair used for key retrieval is not found at provided path \"$PK_KR_PATH\"."
@@ -289,6 +278,12 @@ function check_args_env() {
 
         if [ ! -f "$KBS_CERT_PATH" ]; then
             echo "TLS certificate of Trustee KBS not found at provided path \"$KBS_CERT_PATH\"."
+            usage
+            exit 1
+        fi
+
+        if [[ ${#K_RFS_HEX} -ne $((EXPECTED_K_RFS_SIZE / 4)) ]]; then
+            echo "Key for encryption of root filesystem must be ${EXPECTED_K_RFS_SIZE} bits long."
             usage
             exit 1
         fi
@@ -348,7 +343,7 @@ function check_args_env() {
         # If input and output paths are different, copy image before re-encryption.
         # Otherwise, we do a re-encryption in-place.
         if [[ "$(realpath "$PATH_IMG_IN")" == "$(realpath "$PATH_IMG_OUT")" ]]; then
-            echo "Input and output paths are the same. No copy needed for re-encryption."
+            echo "Input and output paths are the same. No copy needed to update GRUB."
         else
             cp -f "$PATH_IMG_IN" "$PATH_IMG_OUT"
         fi
@@ -435,13 +430,12 @@ function create_partitions() {
 #   - PART: Partition to encrypt.
 #   - LABEL_PART_ENC: Label of the encrypted partition.
 #   - LABEL_DEV_DEC: Label of virtual device that provides a decrypted view of the data in the encrypted partition.
+#   - KEY_HEX: Hex-encoded encryption key (256-bit for AES-256).
 function create_luks_partition() {
     local PART=$1
     local LABEL_PART_ENC=$2
     local LABEL_DEV_DEC=$3
-
-    # Use dummy key for the initial encryption of root file system.
-    local KEY_HEX=$(< ${TMP_K_RFS})
+    local KEY_HEX=$4
 
     if [[ ${#KEY_HEX} -ne $((EXPECTED_K_RFS_SIZE / 4)) ]]; then
         echo "Dummy key for encryption of root filesystem must be ${EXPECTED_K_RFS_SIZE} bits long."
@@ -465,8 +459,8 @@ function create_luks_partition() {
     echo "/dev/mapper/${LABEL_DEV_DEC}"
 }
 
-# Function to re-encrypt the existing LUKS partition with the provided key and update GRUB configuration in existing encrypted image..
-function reencrypt_luks_partition() {
+# Function to update GRUB configuration in existing encrypted image.
+function update_grub_boot_mode() {
     local key_new_hex=$1
     local PATH_IMG_OUT=$2
     local label_dev_rootfs_dec=$3
@@ -492,37 +486,6 @@ function reencrypt_luks_partition() {
     local part_efi=$(lsblk -lno NAME,PARTLABEL | grep 'uefi' | awk '{print $1}' | tail -n 1)
     part_efi="/dev/${part_efi}"
     echo "Detected EFI partition: $part_efi"
-
-    # Read dummy key used for initial root file system encryption.
-    local key_old_hex=$(< ${TMP_K_RFS})
-
-    # Pre-check old key correctness (Checking dummy key before adding new key)
-    if ! echo -n "$key_old_hex" | xxd -r -p | cryptsetup luksOpen --test-passphrase "$part_rootfs" --key-file -; then
-        echo "Error: supplied dummy key does not unlock $part_rootfs (wrong TMP_K_RFS)."
-        losetup -d "$loop_dev"
-        exit 1
-    fi
-
-    # Add the new key to the LUKS partition using named pipes
-    mkfifo /tmp/key_old_fifo /tmp/key_new_fifo
-    echo -n "$key_old_hex" | xxd -r -p > /tmp/key_old_fifo &
-    echo -n "$key_new_hex" | xxd -r -p > /tmp/key_new_fifo &
-
-    # Add the new key to the LUKS partition.
-    cryptsetup luksAddKey "$part_rootfs" --key-file=/tmp/key_old_fifo --new-keyfile=/tmp/key_new_fifo || {
-        echo "Error: Failed to add new key to LUKS partition, returned with status: $?."
-        cleanup_td_fde_boot
-        exit 1
-    }
-    rm -f /tmp/key_old_fifo /tmp/key_new_fifo
-
-    # Remove the old key from the LUKS partition.
-    echo -n "$key_old_hex" | xxd -r -p |
-        cryptsetup luksRemoveKey $part_rootfs --key-file - || {
-        echo "Error: Failed to remove old key from LUKS partition, returned with status: $?."
-        cleanup_td_fde_boot
-        exit 1
-    }
 
     # Check that LUKS partition can be opened with the new key.
     echo -n "$key_new_hex" | xxd -r -p |
@@ -717,7 +680,7 @@ function fill_rootfs() {
     umount ${PATH_MNT_ROOTFS}/proc
     umount ${PATH_MNT_EFI}
     umount ${PATH_MNT_BOOT}
-    umount ${PATH_MNT_ROOTFS}/
+    umount -l ${PATH_MNT_ROOTFS}/
 }
 
 function close_partitions() {
@@ -770,8 +733,8 @@ function handle_get_quote() {
     echo "=============== Encrypt RootFS and Open =========="
 
     # Encrypt root partition with LUKS and open the partition to a virtual device.
-    # A hardcoded dummy key is used for the encryption.
-    DEV_ROOTFS_DEC=$(create_luks_partition  "$PART_ROOTFS" "$LABEL_PART_ROOTFS_ENC" "$LABEL_DEV_ROOTFS_DEC" | tail -n 1)
+    # Provided Root file system key is used for the encryption.
+    DEV_ROOTFS_DEC=$(create_luks_partition  "$PART_ROOTFS" "$LABEL_PART_ROOTFS_ENC" "$LABEL_DEV_ROOTFS_DEC" "$K_RFS_HEX" | tail -n 1)
     echo "Virtual device providing decrypted access to encrypted root partition: $DEV_ROOTFS_DEC"
 
     echo "=============== Format Partitions =========="
@@ -801,10 +764,10 @@ function handle_td_fde_boot() {
 
     cleanup_td_fde_boot
 
-    echo "=============== Re-encrypt Existing LUKS Partition ==============="
+    echo "=============== Update GRUB Configuration ==============="
 
-    # Re-encrypt the existing LUKS partition with the provided key.
-    reencrypt_luks_partition "$K_RFS_HEX" "$PATH_IMG_OUT" "$LABEL_DEV_ROOTFS_DEC"
+    # Update TD_BOOT_MODE in GRUB configuration to TD_FDE_BOOT
+    update_grub_boot_mode "$K_RFS_HEX" "$PATH_IMG_OUT" "$LABEL_DEV_ROOTFS_DEC"
 }
 
 # Function to perform cleanup when script is interrupted
