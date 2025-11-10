@@ -1,0 +1,122 @@
+diff --git a/guest-tools/direct-boot/boot_direct.sh b/guest-tools/direct-boot/boot_direct.sh
+index bf7f9a9..384122d 100755
+--- a/guest-tools/direct-boot/boot_direct.sh
++++ b/guest-tools/direct-boot/boot_direct.sh
+@@ -16,6 +16,21 @@
+ # of MERCHANTABILITY, SATISFACTORY QUALITY, or FITNESS FOR A PARTICULAR PURPOSE.
+ # See the GNU General Public License for more details.
+ 
++cleanup() {
++    rm -f /tmp/tdx-guest-*.log &> /dev/null
++    rm -f /tmp/tdx-demo-*-monitor.sock &> /dev/null
++
++    PID_TD=$(cat /tmp/tdx-demo-td-pid.pid 2> /dev/null)
++
++    [ ! -z "$PID_TD" ] && echo "Cleanup, kill TD with PID: ${PID_TD}" && kill -TERM ${PID_TD} &> /dev/null
++    sleep 3
++}
++
++cleanup
++if [ "$1" = "clean" ]; then
++    exit 0
++fi
++
+ SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+ 
+ UBUNTU_VERSION=$1
+@@ -24,12 +39,70 @@ if [[ -z "${UBUNTU_VERSION}" ]]; then
+     exit 1
+ fi
+ 
++shift
++
+ PROCESS_NAME=td
+ TDVF_FIRMWARE=/usr/share/ovmf/OVMF.fd
++SSH_PORT=10022
++DAEMONIZE=true
++CONSOLE="-daemonize"
++
++process_args() {
++    while getopts ":h:f:d:" option; do
++        case "$option" in
++            f) TDVF_FIRMWARE=$OPTARG;;
++            d) DAEMONIZE=false;;
++            h) usage
++               exit 0
++               ;;
++            *)
++               echo "Invalid option '-$OPTARG'"
++               usage
++               exit 1
++               ;;
++        esac
++    done
++}
++
++usage() {
++    cat << EOM
++Usage: $(basename "$0") [OPTION]...
++  -f <TDVF_FIRMWARE>        Virtual Firmware device file for "TD"
++  -d <DAEMONIZE>            Run TD in daemonize mode?. Valid values [true/false], default=true
++  -h                        Show this help
++EOM
++}
++
++process_args "$@"
++
++if [ "$DAEMONIZE" = false ] ; then
++    CONSOLE="-chardev stdio,id=mux,mux=on \
++        -device virtio-serial,romfile= \
++        -device virtconsole,chardev=mux -monitor chardev:mux \
++        -serial chardev:mux "
++fi
++
++if [[ ! -f $TDVF_FIRMWARE ]]; then
++    echo "Could not find $TDVF_FIRMWARE. Please specify the TDVF_FIRMWARE file path."
++    exit 0
++fi
+ 
+ KERNEL_FILE=$(realpath ${SCRIPT_DIR}/../image/vmlinuz-${UBUNTU_VERSION})
+ INITRD_FILE=$(realpath ${SCRIPT_DIR}/../image/initrd.img-${UBUNTU_VERSION})
+-TD_IMG=$(realpath ${SCRIPT_DIR}/../image/tdx-guest-ubuntu-${UBUNTU_VERSION}-generic.qcow2)
++TD_IMG=${TD_IMG:-$(realpath ${SCRIPT_DIR}/../image/tdx-guest-ubuntu-${UBUNTU_VERSION}-generic.qcow2)}
++QUOTE_VSOCK_ARGS="-device vhost-vsock-pci,guest-cid=3"
++
++if [[ -z $UUID || -z $label ]]; then
++    echo "Missing cryptdevice UUID or label value"
++    echo "Usage: UUID=<luks-uuid> label=<decrypted-label> TD_BOOT_MODE=<GET_QUOTE | TD_FDE_BOOT> TD_IMG=<path-to-td-image> $0 <24.04|24.10> [-f <TDVF_FIRMWARE>] [-d <DAEMONIZE>]"
++    exit 1
++fi
++
++if [[ -z $TD_BOOT_MODE ]]; then
++    echo "Missing TD boot mode"
++    echo "Usage: UUID=<luks-uuid> label=<decrypted-label> TD_BOOT_MODE=<GET_QUOTE | TD_FDE_BOOT> TD_IMG=<path-to-td-image> $0 <24.04|24.10> [-f <TDVF_FIRMWARE>] [-d <DAEMONIZE>]"
++    exit 1
++fi
+ 
+ if [[ ! -f "${KERNEL_FILE}" ]]; then
+     echo "Missing kernel file: ${KERNEL_FILE}
+@@ -59,10 +132,20 @@ qemu-system-x86_64 -accel kvm \
+ 		   -machine q35,kernel_irqchip=split,confidential-guest-support=tdx,hpet=off \
+ 		   -bios ${TDVF_FIRMWARE} \
+ 		   -nographic \
++		   ${CONSOLE} \
+ 		   -nodefaults \
++		   -device virtio-net-pci,netdev=nic0_td -netdev user,id=nic0_td,hostfwd=tcp::${SSH_PORT}-:22 \
+ 		   -kernel ${KERNEL_FILE} \
+ 		   -initrd ${INITRD_FILE} \
+-		   -append "root=/dev/sda1 console=ttyS0" \
+-		   -hda ${TD_IMG} \
+-		   -serial stdio \
++		   -append "root=/dev/mapper/${label} console=ttyS0 cryptdevice=UUID=${UUID}:${label} td-boot-mode=${TD_BOOT_MODE}" \
++		   -drive file=${TD_IMG},if=none,id=virtio-disk0 \
++		   -device virtio-blk-pci,drive=virtio-disk0 \
++		   ${QUOTE_VSOCK_ARGS} \
+ 		   -pidfile /tmp/tdx-demo-td-pid.pid
++
++if [ "$DAEMONIZE" = true ] ; then
++    PID_TD=$(cat /tmp/tdx-demo-td-pid.pid)
++    echo "TD started by QEMU with PID: ${PID_TD}.
++	To log in with the non-root user (default: tdx / password: 123456), as specified in setup-tdx-config, use: $ ssh -p ${SSH_PORT} <username>@localhost
++	To log in as root (default password: 123456), use: $ ssh -p ${SSH_PORT} root@localhost"
++fi

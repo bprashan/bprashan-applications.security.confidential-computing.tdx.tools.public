@@ -8,3 +8,5 @@ tools/image/*.tar.xz
 tools/image/*.img
 tools/image/my_venv
 tools/image/kbs_url
+tools/image/initrd.*
+tools/image/vmlinuz*

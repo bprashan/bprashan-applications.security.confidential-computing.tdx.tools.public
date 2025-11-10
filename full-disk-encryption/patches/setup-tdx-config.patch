@@ -1,8 +1,8 @@
 diff --git a/setup-tdx-config b/setup-tdx-config
-index 38ed3c1..e65a53d 100644
+index 90497a2..4fa3dfb 100644
 --- a/setup-tdx-config
 +++ b/setup-tdx-config
-@@ -35,10 +35,10 @@ TDX_PPA_ATTESTATION=tdx-attestation-release
+@@ -38,10 +38,10 @@ TDX_PPA_ATTESTATION=tdx-attestation-release
  # Enable the installation of DCAP packages from Canonical's
  # repository. This flag is considered during host OS and guest
  # OS setup.
@@ -14,4 +14,4 @@ index 38ed3c1..e65a53d 100644
 +TDX_SETUP_ATTESTATION=1
  
  ################################################################
- # HOST                                                         #
+ # Enable the NVIDIA H100

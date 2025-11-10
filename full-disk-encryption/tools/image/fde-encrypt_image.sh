@@ -5,10 +5,9 @@
 
 # Summary of the Script
 # This script is designed to handle full-disk encryption for a TDX guest image.
-# It supports two main boot modes: GET_QUOTE and TD_FDE_BOOT.
-# Below is a summary of the script's functionality, detailing the steps taken for each boot mode.
-#
-# GET_QUOTE Boot Mode
+# Below is a summary of the script's functionality.
+
+# It performs the following main tasks:
 # - cleanup_get_quote: Cleans up any remnants from a previous run, including unmounting partitions, disconnecting devices, and removing temporary files.
 # - create_image: Creates an empty image file of the calculated size based on the specified partition sizes.
 # - create_partitions: Sets up the partition layout for BIOS, UEFI, boot, and root filesystem in the created image and maps it to a loop device.
@@ -17,10 +16,6 @@
 # - fill_rootfs: Copies data from the base image to the root partition, mounts necessary partitions, and sets up the root filesystem.
 # - close_partitions: Closes the virtual device providing decrypted access to the root partition and detaches the loop device.
 # - modify_ovmf: Enrolls public key from key pair used for key retrieval, KBS url & KBS key path where key to be stored in KMS into the OVMF firmware.
-#
-# TD_FDE_BOOT Boot Mode
-# - cleanup_td_fde_boot: Cleans up any remnants from a previous run, including unmounting partitions and disconnecting devices.
-# - update_grub_boot_mode: Updates GRUB configuration for TD_FDE_BOOT mode.
 
 MY_PATH="$(dirname "$(readlink -f "$0")")"
 pushd "${MY_PATH}"
@@ -123,41 +118,21 @@ function cleanup_get_quote() {
     rm -rf "$PATH_TMP_DIR"
 }
 
-# Function cleans after last TD_FDE_BOOT run, which might have failed at any point.
-function cleanup_td_fde_boot() {
-    if [ -n "$PATH_IMG_OUT" ] && losetup -a | grep "$PATH_IMG_OUT" >/dev/null; then
-        # Close virtual device providing a decrypted view to encrypted root partition.
-        if cryptsetup status "$LABEL_DEV_ROOTFS_DEC" 2>/dev/null | grep -q "is active"; then
-            cryptsetup close "$LABEL_DEV_ROOTFS_DEC" || echo "Warn: failed to close $LABEL_DEV_ROOTFS_DEC"
-        fi
-
-        # Find all loop devices attached to the encrypted image and detach them.
-        losetup -a | grep -F -- "$PATH_IMG_OUT" | cut -d: -f1 | while read -r loop_dev; do
-            losetup -d "$loop_dev" || echo "Warn: failed to detach $loop_dev"
-        done
-
-    fi
-}
-
 function usage() {
     cat <<EOF
-Usage: $(basename "$0") <TD boot mode> [OPTION]...
-
-Boot modes:
-    GET_QUOTE       Perform encryption, which is used to retrieve TD quote from TD.
-    TD_FDE_BOOT     Update GRUB configuration for TD_FDE_BOOT mode.
+Usage: $(basename "$0") [OPTION]...
 
 Options:
-    -c <KBS_CERT_PATH>      Path to TLS certificate of Trustee KBS; mandatory for TD boot mode \"GET_QUOTE\", forbidden for TD boot mode \"TD_FDE_BOOT\"
-    -p <PATH_IMG_IN>        Path to the input image; mandatory for TD boot mode \"GET_QUOTE\" and \"TD_FDE_BOOT\"
-    -e <PATH_IMG_OUT>       Path to the output image; optional for TD boot mode \"GET_QUOTE\" and \"TD_FDE_BOOT\"; default is \"GET_QUOTE\" added as a postfix for \"GET_QUOTE\" and \"TD_FDE_BOOT\" added as a postfix for \"TD_FDE_BOOT\".
-    -f <PK_KR_PATH>         Path to the public key from key pair used for key retrieval; mandatory for TD boot mode \"GET_QUOTE\", forbidden for TD boot mode \"TD_FDE_BOOT\"
-    -u <KBS_URL>            URL of Trustee KBS; mandatory for TD boot mode \"GET_QUOTE\", forbidden for TD boot mode \"TD_FDE_BOOT\"
-    -k <K_RFS_HEX>          Key for encryption of root filesystem in hex encoding; mandatory for TD boot mode \"GET_QUOTE\" and \"TD_FDE_BOOT\"
-    -i <K_PATH>             Path used by Trustee KBS for root filesystem encryption key; mandatory for TD boot mode \"GET_QUOTE\", forbidden for TD boot mode \"TD_FDE_BOOT\"
+    -c <KBS_CERT_PATH>      Path to TLS certificate of Trustee KBS; mandatory argument.
+    -p <PATH_IMG_IN>        Path to the input image; mandatory argument.
+    -e <PATH_IMG_OUT>       Path to the output image; optional argument.
+    -f <PK_KR_PATH>         Path to the public key from key pair used for key retrieval; mandatory argument.
+    -u <KBS_URL>            URL of Trustee KBS; mandatory argument.
+    -k <K_RFS_HEX>          Key for encryption of root filesystem in hex encoding; mandatory argument.
+    -i <K_PATH>             Path used by Trustee KBS for root filesystem encryption key; mandatory argument.
 
-    -r <SIZE_PART_ROOTFS>   Size of root filesystem partition; optional for TD boot mode \"GET_QUOTE\", forbidden for TD boot mode \"TD_FDE_BOOT\"; default is 10GB
-    -b <SIZE_PART_BOOT>     Size of boot partition; optional for TD boot mode \"GET_QUOTE\", forbidden for TD boot mode \"TD_FDE_BOOT\"; default is 2GB
+    -r <SIZE_PART_ROOTFS>   Size of root filesystem partition; optional argument; default is 10GB
+    -b <SIZE_PART_BOOT>     Size of boot partition; optional argument; default is 2GB
 
     -h                      Show this help
 EOF
@@ -178,16 +153,6 @@ function process_args() {
             exit 0
         fi
     done
-
-
-    if [[ "$1" != "TD_FDE_BOOT" && "$1" != "GET_QUOTE" ]]; then
-        echo "Invalid TD boot mode '$1'"
-        usage
-        exit 1
-    fi
-
-    TD_BOOT_MODE=$1
-    shift
 
     while getopts "h:r:b:p:k:i:u:c:e:f:" option; do
         case "$option" in
@@ -260,92 +225,48 @@ check_params_empty() {
 
 # Check validity of provided arguments
 function check_args_env() {
-    check_params_filled PATH_IMG_IN
+    check_params_filled PATH_IMG_IN KBS_CERT_PATH PK_KR_PATH KBS_URL K_PATH K_RFS_HEX
 
     if [ ! -f "$PATH_IMG_IN" ]; then
         echo "Input image not present at \"$PATH_IMG_IN\"."
         exit 1
     fi
 
-    if [[ $TD_BOOT_MODE == "GET_QUOTE" ]]; then
-        check_params_filled KBS_CERT_PATH PK_KR_PATH KBS_URL K_PATH K_RFS_HEX
+    if [ ! -f "$PK_KR_PATH" ]; then
+        echo "Public key from key pair used for key retrieval is not found at provided path \"$PK_KR_PATH\"."
+        usage
+        exit 1
+    fi
 
-        if [ ! -f "$PK_KR_PATH" ]; then
-            echo "Public key from key pair used for key retrieval is not found at provided path \"$PK_KR_PATH\"."
-            usage
-            exit 1
-        fi
+    if [ ! -f "$KBS_CERT_PATH" ]; then
+        echo "TLS certificate of Trustee KBS not found at provided path \"$KBS_CERT_PATH\"."
+        usage
+        exit 1
+    fi
 
-        if [ ! -f "$KBS_CERT_PATH" ]; then
-            echo "TLS certificate of Trustee KBS not found at provided path \"$KBS_CERT_PATH\"."
-            usage
-            exit 1
-        fi
+    if [[ ${#K_RFS_HEX} -ne $((EXPECTED_K_RFS_SIZE / 4)) ]]; then
+        echo "Key for encryption of root filesystem must be ${EXPECTED_K_RFS_SIZE} bits long."
+        usage
+        exit 1
+    fi
 
-        if [[ ${#K_RFS_HEX} -ne $((EXPECTED_K_RFS_SIZE / 4)) ]]; then
-            echo "Key for encryption of root filesystem must be ${EXPECTED_K_RFS_SIZE} bits long."
-            usage
-            exit 1
-        fi
+    # Input image must be an qcow2 image.
+    if [[ "$PATH_IMG_IN" != *".qcow2" ]]; then
+        echo "Error: The input file must have .qcow2 extension."
+        exit 1
+    fi
 
-        # Input image must be an qcow2 image.
-        if [[ "$PATH_IMG_IN" != *".qcow2" ]]; then
-            echo "Error: For GET_QUOTE mode, the input file must have .qcow2 extension."
-            exit 1
-        fi
-
-        if [ -z "$PATH_IMG_OUT" ]; then
-            PATH_IMG_OUT="${PATH_IMG_IN%.*}_GET_QUOTE.img"
-        else
-            if [[ "$PATH_IMG_OUT" != *".img" ]]; then
-                echo "Error: For GET_QUOTE mode, the output file must have .img extension."
-                exit 1
-            fi
-
-            if [[ "$(realpath "$PATH_IMG_IN")" == "$(realpath "$PATH_IMG_OUT")" ]]; then
-                echo "Error: The output image path cannot be the same as the input image path."
-                exit 1
-            fi
-        fi
-
-    elif [[ "$TD_BOOT_MODE" == "TD_FDE_BOOT" ]]; then
-        check_params_filled K_RFS_HEX 
-        check_params_empty KBS_CERT_PATH SIZE_PART_ROOTFS SIZE_PART_BOOT PK_KR_PATH KBS_URL K_PATH
-
-        # Input image must be an raw image.
-        if [[ "$PATH_IMG_IN" != *".img" ]]; then
-            echo "Error: For TD_FDE_BOOT mode, the input file must have .img extension."
-            exit 1
-        fi
-
-        if [[ ${#K_RFS_HEX} -ne $((EXPECTED_K_RFS_SIZE / 4)) ]]; then
-            echo "Key for encryption of root filesystem must be ${EXPECTED_K_RFS_SIZE} bits long."
-            usage
-            exit 1
-        fi
-
-        if [ -z "$PATH_IMG_OUT" ]; then
-            # If no output file path was provided, create a default output file path
-            # If the input file path ends with "_GET_QUOTE.img", replace that suffix with "_TD_FDE_BOOT.img"
-            # Otherwise, append "_TD_FDE_BOOT" before the extension
-            if [[ "$PATH_IMG_IN" == *"_GET_QUOTE.img" ]]; then
-                PATH_IMG_OUT="${PATH_IMG_IN%_GET_QUOTE.img}_TD_FDE_BOOT.img"
-            else
-                PATH_IMG_OUT="${PATH_IMG_IN%.*}_TD_FDE_BOOT.img"
-            fi
-        fi
-
+    if [ -z "$PATH_IMG_OUT" ]; then
+        PATH_IMG_OUT="${PATH_IMG_IN%.*}_GET_QUOTE.img"
+    else
         if [[ "$PATH_IMG_OUT" != *".img" ]]; then
-            echo "Error: For TD_FDE_BOOT mode, the output file must have .img extension."
+            echo "Error: The output file must have .img extension."
             exit 1
         fi
 
-        # If input and output paths are different, copy image before re-encryption.
-        # Otherwise, we do a re-encryption in-place.
         if [[ "$(realpath "$PATH_IMG_IN")" == "$(realpath "$PATH_IMG_OUT")" ]]; then
-            echo "Input and output paths are the same. No copy needed to update GRUB."
-        else
-            cp -f "$PATH_IMG_IN" "$PATH_IMG_OUT"
+            echo "Error: The output image path cannot be the same as the input image path."
+            exit 1
         fi
     fi
 }
@@ -437,12 +358,6 @@ function create_luks_partition() {
     local LABEL_DEV_DEC=$3
     local KEY_HEX=$4
 
-    if [[ ${#KEY_HEX} -ne $((EXPECTED_K_RFS_SIZE / 4)) ]]; then
-        echo "Dummy key for encryption of root filesystem must be ${EXPECTED_K_RFS_SIZE} bits long."
-        usage
-        exit 1
-    fi
-
     # Decode hex-encoded key, and set up an encrypted partition using LUKS2 with AES-GCM encryption using a 256bit key and AEAD for integrity protection.
     echo -n "$KEY_HEX" | xxd -r -p |
         cryptsetup -v -q luksFormat --encrypt --type luks2 \
@@ -457,88 +372,6 @@ function create_luks_partition() {
 
     # Print/return path of virtual device providing decrypted access to encrypted partition.
     echo "/dev/mapper/${LABEL_DEV_DEC}"
-}
-
-# Function to update GRUB configuration in existing encrypted image.
-function update_grub_boot_mode() {
-    local key_new_hex=$1
-    local PATH_IMG_OUT=$2
-    local label_dev_rootfs_dec=$3
-
-    # Find an unused loop device and attach the image to it.
-    local loop_dev=$(losetup --find --show "$PATH_IMG_OUT")
-    echo "Attached loop device: $loop_dev"
-
-    # Inform the operating system kernel of partition table changes of the image file.
-    partprobe ${loop_dev}
-
-    # Determine the rootfs partition.
-    local part_rootfs=$(lsblk -lno NAME,PARTLABEL | grep 'rootfs' | awk '{print $1}' | tail -n 1)
-    part_rootfs="/dev/${part_rootfs}"
-    echo "Detected rootfs partition: $part_rootfs"
-
-    # Detect boot partitions
-    local part_boot=$(lsblk -lno NAME,PARTLABEL | grep -w 'boot' | awk '{print $1}' | tail -n 1)
-    part_boot="/dev/${part_boot}"
-    echo "Detected boot partition: $part_boot"
-
-    # Determine EFI partition.
-    local part_efi=$(lsblk -lno NAME,PARTLABEL | grep 'uefi' | awk '{print $1}' | tail -n 1)
-    part_efi="/dev/${part_efi}"
-    echo "Detected EFI partition: $part_efi"
-
-    # Check that LUKS partition can be opened with the new key.
-    echo -n "$key_new_hex" | xxd -r -p |
-        cryptsetup luksOpen --key-size 256 $part_rootfs "${label_dev_rootfs_dec}" --key-file - || {
-        echo "Error: Failed to open LUKS partition with the new key, returned with status: $?."
-        cleanup_td_fde_boot
-        exit 1
-    }
-
-    # Create temporary directory and mount virtual device providing decrypted access to encrypted root partition to this directory.
-    mkdir -p ${PATH_MNT_ROOTFS}
-    mount "/dev/mapper/${label_dev_rootfs_dec}" ${PATH_MNT_ROOTFS}
-    
-    # Mount the boot partition inside the "boot" folder of the root partition.
-    mkdir -p ${PATH_MNT_BOOT}
-    mount "$part_boot" ${PATH_MNT_BOOT}
-    
-    # Mount the efi partition inside the "boot/efi" folder of the root partition.
-    mkdir -p ${PATH_MNT_EFI}
-    mount "$part_efi" ${PATH_MNT_EFI}
-    
-    # Mount necessary system directories for chroot
-    mount -t proc none ${PATH_MNT_ROOTFS}/proc
-    mount -t sysfs none ${PATH_MNT_ROOTFS}/sys
-    mount --bind /dev ${PATH_MNT_ROOTFS}/dev
-    mount --bind /dev/pts ${PATH_MNT_ROOTFS}/dev/pts
-    
-    # Update td-boot-mode in GRUB config
-    chroot ${PATH_MNT_ROOTFS} /bin/bash <<EOF
-set -e
-sed -i 's/td-boot-mode=GET_QUOTE/td-boot-mode=TD_FDE_BOOT/g' /etc/default/grub.d/50-cloudimg-settings.cfg
-cat /etc/default/grub.d/50-cloudimg-settings.cfg | grep GRUB_CMDLINE_LINUX_DEFAULT
-update-grub
-EOF
-    
-    # Unmount everything
-    umount ${PATH_MNT_ROOTFS}/dev/pts
-    umount ${PATH_MNT_ROOTFS}/dev
-    umount ${PATH_MNT_ROOTFS}/sys
-    umount ${PATH_MNT_ROOTFS}/proc
-    umount ${PATH_MNT_EFI}
-    umount ${PATH_MNT_BOOT}
-    umount ${PATH_MNT_ROOTFS}
-
-    # Close virtual device providing decrypted access to root partition.
-    cryptsetup close "$label_dev_rootfs_dec" || {
-        echo "Error: Failed to close virtual device providing decrypted access to root partition, returned with status: $?."
-        cleanup_td_fde_boot
-        exit 1
-    }
-
-    # Detach loop device.
-    losetup -d $loop_dev
 }
 
 # Format EFI partition, boot partition, and device providing decrypted access to encrypted root partition.
@@ -579,7 +412,6 @@ function fill_rootfs() {
     local KBS_CERT_PATH=$6
     local LABEL_PART_ROOTFS_ENC=$7
     local LABEL_DEV_ROOTFS_DEC=$8
-    local TD_BOOT_MODE=$9
 
     # Ensures that the nbd module is available
     if ! lsmod | grep -wq nbd; then
@@ -626,8 +458,10 @@ function fill_rootfs() {
     # Create a temporary directory that is used to mount partitions from the base image to.
     mkdir -p ${PATH_MNT_NBT}
 
-    # Copy the content of rootfs partition from base image to the rootfs partition.
     mount ${UNUSED_DEV_NBD}p1 ${PATH_MNT_NBT}
+    # Detect Ubuntu version to use that to rename initrd and vmlinuz files later.
+    local UBUNTU_VERSION=$(grep DISTRIB_RELEASE ${PATH_MNT_NBT}/etc/lsb-release | cut -d'=' -f2)
+    # Copy the content of rootfs partition from base image to the rootfs partition.
     cp -rfp ${PATH_MNT_NBT}/* ${PATH_MNT_ROOTFS}
     umount ${PATH_MNT_NBT}
 
@@ -668,8 +502,47 @@ function fill_rootfs() {
 
     # Copy installation script into root partition, execute it, and remove it.
     cp scripts/install ${PATH_MNT_ROOTFS}/tmp/
-    chroot ${PATH_MNT_ROOTFS}/ /bin/bash tmp/install "$PART_ROOTFS" "$LABEL_PART_ROOTFS_ENC" "$LABEL_DEV_ROOTFS_DEC" "$TD_BOOT_MODE"
+    chroot ${PATH_MNT_ROOTFS}/ /bin/bash tmp/install "$PART_ROOTFS" "$LABEL_PART_ROOTFS_ENC" "$LABEL_DEV_ROOTFS_DEC"
     rm ${PATH_MNT_ROOTFS}/tmp/install
+
+    echo "=============== Direct Boot LUKS Settings ============="
+    echo "export UUID=$(cryptsetup luksUUID $PART_ROOTFS)"
+    echo "export label=$LABEL_DEV_ROOTFS_DEC"
+
+    # Extract initrd and vmlinuz.
+    mkdir -p ${MY_PATH}
+    # Find the kernel version by looking for vmlinuz files in the boot directory and sorting them.
+    KERNEL_VERSION=$(find ${PATH_MNT_ROOTFS}/boot/vmlinuz-*-generic 2>/dev/null \
+        | ${PATH_MNT_ROOTFS}/usr/lib/grub/grub-sort-version -r 2>/dev/null \
+        | gawk 'match($0 , /^.*\/vmlinuz-(.*)/, a) {print a[1];exit}')
+    
+    INITRD_PATH="${PATH_MNT_ROOTFS}/boot/initrd.img-${KERNEL_VERSION}"
+    VMLINUZ_PATH="${PATH_MNT_ROOTFS}/boot/vmlinuz-${KERNEL_VERSION}"    
+
+    if [[ -f "$INITRD_PATH" && -f "$VMLINUZ_PATH" ]]; then
+        if [[ -z "$UBUNTU_VERSION" ]]; then
+            UBUNTU_VERSION="24.04" # Default to 24.04 if not detected
+        fi
+        cp "$INITRD_PATH" "${MY_PATH}/initrd.img-${UBUNTU_VERSION}"
+        cp "$VMLINUZ_PATH" "${MY_PATH}/vmlinuz-${UBUNTU_VERSION}"
+        chmod +r "${MY_PATH}/vmlinuz-${UBUNTU_VERSION}"
+
+        echo "initrd.img-${UBUNTU_VERSION} & vmlinuz-${UBUNTU_VERSION} copied and placed in ${MY_PATH}"
+    else
+        echo "Error: Kernel or initrd file not found for version ${KERNEL_VERSION}"
+        ls ${PATH_MNT_ROOTFS}/boot/
+
+        umount ${PATH_MNT_ROOTFS}/dev/pts
+        umount ${PATH_MNT_ROOTFS}/dev
+        umount ${PATH_MNT_ROOTFS}/run
+        umount ${PATH_MNT_ROOTFS}/tmp
+        umount -l ${PATH_MNT_ROOTFS}/sys
+        umount ${PATH_MNT_ROOTFS}/proc
+        umount ${PATH_MNT_EFI}
+        umount ${PATH_MNT_BOOT}
+        umount -l ${PATH_MNT_ROOTFS}/
+        exit 1
+    fi
 
     # Clean up mount points
     umount ${PATH_MNT_ROOTFS}/dev/pts
@@ -745,7 +618,7 @@ function handle_get_quote() {
     echo "=============== Fill Opened RootFS ========"
 
     # Fill RootFS with needed files
-    fill_rootfs "$PART_EFI" "$PART_BOOT" "$DEV_ROOTFS_DEC" "$PART_ROOTFS" "$PATH_IMG_IN" "$KBS_CERT_PATH" "$LABEL_PART_ROOTFS_ENC" "$LABEL_DEV_ROOTFS_DEC" "$TD_BOOT_MODE"
+    fill_rootfs "$PART_EFI" "$PART_BOOT" "$DEV_ROOTFS_DEC" "$PART_ROOTFS" "$PATH_IMG_IN" "$KBS_CERT_PATH" "$LABEL_PART_ROOTFS_ENC" "$LABEL_DEV_ROOTFS_DEC"
 
     echo "=============== Close Partitions ============="
 
@@ -758,28 +631,12 @@ function handle_get_quote() {
     modify_ovmf
 }
 
-# Function to handle the TD_FDE_BOOT boot mode
-function handle_td_fde_boot() {
-    echo "=============== Cleanup Last Run ==============="
-
-    cleanup_td_fde_boot
-
-    echo "=============== Update GRUB Configuration ==============="
-
-    # Update TD_BOOT_MODE in GRUB configuration to TD_FDE_BOOT
-    update_grub_boot_mode "$K_RFS_HEX" "$PATH_IMG_OUT" "$LABEL_DEV_ROOTFS_DEC"
-}
-
 # Function to perform cleanup when script is interrupted
 function cleanup_on_interrupt() {
-    echo "=============== Script interrupted in $TD_BOOT_MODE mode - Cleaning up resources ==============="
+    echo "=============== Script interrupted - Cleaning up resources ==============="
 
-    # Use existing cleanup functions based on boot mode
-    if [[ "$TD_BOOT_MODE" == "GET_QUOTE" ]]; then
-        cleanup_get_quote "$PATH_IMG_IN"
-    elif [[ "$TD_BOOT_MODE" == "TD_FDE_BOOT" ]]; then
-        cleanup_td_fde_boot
-    fi
+    # cleanup function
+    cleanup_get_quote "$PATH_IMG_IN"
 
     echo "=============== Cleanup completed ==============="
 }
@@ -788,7 +645,7 @@ set -e
 
 process_args "$@"
 
-echo "=============== Build Start in mode $TD_BOOT_MODE ==============="
+echo "=============== Build Start ==============="
 echo "=============== Check Validity of Parameters ==============="
 
 check_args_env
@@ -800,15 +657,7 @@ OVMF_INPUT=${MY_PATH}/../../data/ovmf-extracted/usr/share/ovmf/OVMF.tdx.fd
 OVMF_OUTPUT=OVMF_FDE.fd
 
 # Main script execution
-if [[ $TD_BOOT_MODE == "GET_QUOTE" ]]; then
-    handle_get_quote "$@"
-elif [[ $TD_BOOT_MODE == "TD_FDE_BOOT" ]]; then
-    handle_td_fde_boot "$@"
-else
-    echo "Invalid TD boot mode '$TD_BOOT_MODE'"
-    usage
-    exit 1
-fi
+handle_get_quote "$@"
 
 echo "=============== Set Owner of Created OVMF and TD Image ============="
 USER_GROUP=$(id -gn "$LOGIN_USER")
