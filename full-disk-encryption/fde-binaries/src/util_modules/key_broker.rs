@@ -37,8 +37,8 @@ struct KeyTransferPolicyParams {
     mrtd: String,
     /// Runtime measurement register 1
     rtmr1: String,
-    /// Runtime measurement register 2
-    rtmr2: String,
+    /// Runtime measurement register 0
+    rtmr0: String,
     /// Runtime measurement register 3
     rtmr3: String,
 }
@@ -83,7 +83,7 @@ impl TrusteeKbs {
 
                 allow if {{
                     input["tdx.quote.body.rtmr_1"] == "{}"
-                    input["tdx.quote.body.rtmr_2"] == "{}"
+                    input["tdx.quote.body.rtmr_0"] == "{}"
                     input["tdx.quote.body.rtmr_3"] == "{}"
                     input["tdx.quote.body.mr_seam"] == "{}"
                     input["tdx.quote.body.mrsigner_seam"] == "{}"
@@ -92,7 +92,7 @@ impl TrusteeKbs {
                 }}
                 "#,
             params.rtmr1,
-            params.rtmr2,
+            params.rtmr0,
             params.rtmr3,
             params.mrseam,
             params.mrsignerseam,
@@ -160,14 +160,14 @@ impl TrusteeKbs {
 impl KBS for TrusteeKbs {
     async fn store_k_rfs(&self, k_rfs: &str, auth_private_key_path: &str, quote: &Quote, kbs_resource_path: &str) -> Result<String> {
         // Extract values from the Quote object
-        let (mrseam, mrsignerseam, seamsvn, mrtd, rtmr1, rtmr2, rtmr3) = match quote {
+        let (mrseam, mrsignerseam, seamsvn, mrtd, rtmr1, rtmr0, rtmr3) = match quote {
             Quote::V4(q) => (
                 hex::encode(q.report_body.mr_seam.m),
                 hex::encode(q.report_body.mrsigner_seam.m),
                 q.get_intel_tdx_module_version(),
                 hex::encode(q.report_body.mr_td.m),
                 hex::encode(q.report_body.rt_mr[1].m),
-                hex::encode(q.report_body.rt_mr[2].m),
+                hex::encode(q.report_body.rt_mr[0].m),
                 hex::encode(q.report_body.rt_mr[3].m),
             ),
         };
@@ -179,7 +179,7 @@ impl KBS for TrusteeKbs {
             seamsvn,
             mrtd,
             rtmr1,
-            rtmr2,
+            rtmr0,
             rtmr3,
         };
         

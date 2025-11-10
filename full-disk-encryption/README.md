@@ -406,7 +406,9 @@ Note that the TD image using FDE currently only supports Ubuntu 24.04.
             -e $PWD/tools/image/tdx-guest-ubuntu-24.04-encrypted.img \
             -f $PWD/data/pk_kr.pem \
             -d $PWD/data/tmp_k_rfs \
-            -c $KBS_CERT_PATH
+            -c $KBS_CERT_PATH \
+            -i $KBS_k_PATH \
+            -u $KBS_URL
         ```
 
         Note: The dummy TD image TD<sub>W</sub> requires enough disk space for the following pieces: (1) space for data from the (enriched) base image TD<sub>B</sub>, (2) space for data generated at runtime, and (3) space for encryption overhead of approximately 1GB.
@@ -419,7 +421,7 @@ Note that the TD image using FDE currently only supports Ubuntu 24.04.
         - creates a LUKS2 encrypted partition using a hardcoded dummy key,
         - formats the partitions,
         - fills the encrypted partition with data from the base image TD<sub>B</sub> and FDE binaries,
-        - enrolls the TD boot mode `GET_QUOTE`, and PK_KR into an OVMF image.
+        - enrolls the KBS URL, the key path corresponding to root file system encryption key (<sub>KBS_k_PATH</sub>) to be stored in Hashicorp Vault, and PR_KR into an OVMF image.
 
         In a later step, the dummy key for the LUKS2 partition is replaced by actual key.
         Note that changing OVMF variables does not change TD measurements.
@@ -444,13 +446,13 @@ Note that the TD image using FDE currently only supports Ubuntu 24.04.
     popd
     ```
 
-4. [On Workload Host] Boot TD<sub>W</sub> combined with the OVMF image `OVMF_GET_QUOTE.fd`.
+4. [On Workload Host] Boot TD<sub>W</sub> combined with the OVMF image `OVMF_FDE.fd`.
     Make sure the respective TD image and OVMF binaries are copied to Workload Host and the paths match the following command:
     ```
     TD_IMG=tools/image/tdx-guest-ubuntu-24.04-encrypted.img \
         canonical-tdx/guest-tools/run_td.sh \
         -d false \
-        -f tools/image/OVMF_GET_QUOTE.fd
+        -f tools/image/OVMF_FDE.fd
     ```
 
     During boot, FDE Agent creates a TD Quote using a hash of PK<sub>KR</sub> as report data.
@@ -498,43 +500,41 @@ Note that the TD image using FDE currently only supports Ubuntu 24.04.
         ```
 
         In more detail, this script:
-        - extracts TD attributes `MRSEAM`, `MRSIGNERSEAM`, `SEAMSVN`, `MRTD`, `RTMR1`, `RTMR2`, and `RTMR3` from passed TD Quote,
+        - extracts TD attributes `MRSEAM`, `MRSIGNERSEAM`, `SEAMSVN`, `MRTD`, `RTMR1`, `RTMR0`, and `RTMR3` from passed TD Quote,
         - generates an attestation policy based on the extracted TD attributes, which the Trustee KBS later used to check the validity of a key retrieval request
         - stores the file system encryption key (k<sub>RFS</sub>) in KBS.
 
-8. [On Preparation Host] Re-encrypt TD<sub>W</sub> with the root file system encryption key (k<sub>RFS</sub>), and enroll corresponding key path (<sub>KBS_k_PATH</sub>) and KBS URL into OVMF:
+8. [On Preparation Host] Re-encrypt TD<sub>W</sub> with the root file system encryption key (k<sub>RFS</sub>), and update GRUB configuration to boot in TD_FDE_BOOT mode:
     ```
     sudo tools/image/fde-encrypt_image.sh TD_FDE_BOOT \
         -p $PWD/tools/image/tdx-guest-ubuntu-24.04-encrypted.img \
         -e $PWD/tools/image/tdx-guest-ubuntu-24.04-encrypted.img \
         -d $PWD/data/tmp_k_rfs \
-        -u $KBS_URL \
-        -k $k_RFS \
-        -i $KBS_k_PATH
+        -k $k_RFS
     ```
 
     In more detail, this script:
     - re-encrypts the root filesystem partition using the actual encryption key (k<sub>RFS</sub>) retrieved from Trustee KBS, replacing the initial dummy key,
-    - enrolls Trustee KBS URL, the key path corresponding to root file system encryption key (<sub>KBS_k_PATH</sub>) stored in Vault, and the TD boot mode `TD_FDE_BOOT` into an OVMF image.
+    - updates the GRUB kernel command line to change `td-boot-mode=GET_QUOTE` to `td-boot-mode=TD_FDE_BOOT`.
 
-    Script will print the updated OVMF file path and the updated encrypted image path.
+    Script will print the output image path. The OVMF file (`OVMF_FDE.fd`) from step 2 remains unchanged and will be used for the final boot. The boot mode is controlled by the `td-boot-mode` kernel parameter in GRUB.
 
     Example output:
     ```
     =============== Created Files ================
-    OVMF_PATH: <Path to updated OVMF file>
+    OVMF_PATH: <Path to OVMF file>
     IMAGE_PATH: <Path to encrypted image file>
     ```
 
 ## Runtime Phase
 
-1. [On Workload Host] Boot TD<sub>W</sub> combined with the OVMF image `OVMF_TD_FDE_BOOT.fd`.
+1. [On Workload Host] Boot TD<sub>W</sub> combined with the OVMF image `OVMF_FDE.fd`.
 
     Make sure the respective TD image and OVMF binaries are copied to Workload Host and the paths match the following command:
     ```
     TD_IMG=tools/image/tdx-guest-ubuntu-24.04-encrypted.img canonical-tdx/guest-tools/run_td.sh \
         -d false \
-        -f tools/image/OVMF_TD_FDE_BOOT.fd
+        -f tools/image/OVMF_FDE.fd
     ```
 
     During the TD boot, the FDE Agent in initramfs performs the following steps:
@@ -569,7 +569,7 @@ Note that the TD image using FDE currently only supports Ubuntu 24.04.
 
 ## Limitations
 - The integrity of the actual workload is not protected.
-- The integrity of the components measured in RTMR0 are not protected.
+- The integrity of the components measured in RTMR2 are not protected.
 - Only QEMU-based boot using Canonical's `run_td.sh` is supported at the moment.
     Note that this script does only support one TD at a time
 - The solution currently supports Ubuntu 24.04.
