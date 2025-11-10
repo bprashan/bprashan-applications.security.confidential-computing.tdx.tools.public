@@ -1,0 +1,14 @@
+diff --git a/kbs/docker/coco-as-grpc/Dockerfile b/kbs/docker/coco-as-grpc/Dockerfile
+index 8cf1ab1..4bf9934 100644
+--- a/kbs/docker/coco-as-grpc/Dockerfile
++++ b/kbs/docker/coco-as-grpc/Dockerfile
+@@ -22,7 +22,7 @@ RUN if [ $(uname -m) != ${ARCH} ]; then \
+     apt-get install -y libssl-dev:${OS_ARCH}; fi
+
+ # Build and Install KBS
+-RUN cd kbs && make AS_FEATURE=coco-as-grpc ALIYUN=${ALIYUN} ARCH=${ARCH} NEBULA_CA_PLUGIN=${NEBULA_CA_PLUGIN} && \
++RUN cd kbs && make background-check-kbs VAULT=true AS_FEATURE=coco-as-grpc ALIYUN=${ALIYUN} ARCH=${ARCH} NEBULA_CA_PLUGIN=${NEBULA_CA_PLUGIN} && \
+     make ARCH=${ARCH} install-kbs
+
+ # Download and install Nebula
+ 

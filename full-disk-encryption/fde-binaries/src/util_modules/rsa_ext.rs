@@ -32,14 +32,14 @@ pub trait RsaPublicKeyExt {
 
 impl RsaPublicKeyExt for RsaPublicKey {
     fn base64_encoded(&self) -> String {
-        let key = serialize_pk_ita(self);
+        let key = serialize_pk(self);
 
         // Calculate base64 encoding of the key.
         BASE64_STANDARD.encode(&key)
     }
 
     fn sha512_digest(&self) -> [u8; 64] {
-        let key = serialize_pk_ita(self);
+        let key = serialize_pk(self);
 
         // Calculate sha512 hash of the key.
         let mut hasher = Sha512::new();
@@ -49,7 +49,7 @@ impl RsaPublicKeyExt for RsaPublicKey {
     }
 }
 
-/// Serializes the given RSA public key to the format expected by ITA KBS.
+/// Serializes the given RSA public key.
 ///
 /// # Arguments
 ///
@@ -58,7 +58,7 @@ impl RsaPublicKeyExt for RsaPublicKey {
 /// # Returns
 ///
 /// A `Vec<u8>` containing the serialized public key.
-fn serialize_pk_ita(public_key: &RsaPublicKey) -> Vec<u8> {
+fn serialize_pk(public_key: &RsaPublicKey) -> Vec<u8> {
     // Convert public_key modulus to byte array
     let modulus = public_key.n().to_bytes_be();
 

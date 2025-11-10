@@ -4,10 +4,10 @@
 use anyhow::{anyhow, Ok, Result};
 use clap::Parser;
 
-use rsa::{RsaPrivateKey, RsaPublicKey, rand_core::OsRng};
+use rsa::{RsaPrivateKey, rand_core::OsRng};
 use zeroize::Zeroize;
 use utils::{
-    key_broker::{KBS, ItaKbs},
+    key_broker::{KBS, TrusteeKbs},
     ovmf_var::{OvmfParamsBootMode, OvmfParamsGetQuote, OvmfParamsFdeBoot},
     quote::*,
     rsa_ext::RsaPublicKeyExt,
@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
     // Read label of encrypted root filesystem partition, label of virtual device used for decrypted view of encrypted root filesystem partition, and TD boot mode from arguments.
     let args = Args::parse();
     let label_part_rootfs_enc = args.label_part_rootfs_enc;
-    let label_dev_rootfs_dec: String = args.label_dev_rootfs_dec;
+    let label_dev_rootfs_dec = args.label_dev_rootfs_dec;
 
     // Print input arguments.
     println!("Label Partition Rootfs Enc: {}", label_part_rootfs_enc);
@@ -69,37 +69,21 @@ async fn main() -> Result<()> {
     } else if td_boot_mode == "TD_FDE_BOOT" {
 
        // Generate RSA key pair used for key retrieval.
-       let sk_kr = RsaPrivateKey::new(&mut OsRng, 3072).expect("Failed to generate private key");
-       let pk_kr = RsaPublicKey::from(&sk_kr);
-
-           // Put hash of public part of key retrieval key into report data structure.
-           let report_data = tdx_attest_rs::tdx_report_data_t {
-            d: pk_kr.sha512_digest(),
-        };
-
-        // Retrieve TD quote using the prepared report data.
-        let quote = Quote::retrieve_quote(&report_data)?;
+       let sk_kr = RsaPrivateKey::new(&mut OsRng, 3072).map_err(|e| anyhow!("Failed to generate RSA key pair: {}", e))?;
 
         // Prepare retrieval request for root filesystem key.
         let fde_boot_params = OvmfParamsFdeBoot::new()?;
         let kbs_url = String::from_utf8(fde_boot_params.kbs_url)?;
-        let kbs_k_rfs_id = String::from_utf8(fde_boot_params.kbs_k_rfs_id)?;
-
-        let req_body = format!(
-            r#"{{"quote":"{}","user_data":"{}"}}"#,
-            quote.get_raw_base64().expect("Failed to get base64 quote"),
-            pk_kr.base64_encoded()
-        )
-        .replace("\n", "");
+        let kbs_k_path = String::from_utf8(fde_boot_params.kbs_k_path)?;
 
         // Retrieve root filesystem key from KBS.
         let kbs_cert_path = String::from("/etc/kbs.crt");
-        let kbs = ItaKbs::new(kbs_url, kbs_cert_path)?;
-        let mut k_rfs = kbs.retrieve_k_rfs(req_body, sk_kr, kbs_k_rfs_id)
-            .expect("Failed to retrieve root filesystem key");
+        let kbs = TrusteeKbs::new(kbs_url, kbs_cert_path)?;
+        let mut k_rfs = kbs.retrieve_k_rfs(sk_kr, kbs_k_path).await
+            .map_err(|e| anyhow!("Failed to retrieve root filesystem key: {}", e))?;
 
         // Decrypt root filesystem partition using retrieved root filesystem key.
-        crypt_setup(label_part_rootfs_enc.to_string(), label_dev_rootfs_dec.to_string(), &k_rfs);
+        crypt_setup(label_part_rootfs_enc, label_dev_rootfs_dec, &k_rfs);
 
         // Securely erase root filesystem key from memory.
         k_rfs.zeroize();

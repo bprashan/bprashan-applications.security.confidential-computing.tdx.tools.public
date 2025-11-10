@@ -26,6 +26,15 @@ panic=1
 # Mount efivars to get EFI variables
 mount -t efivarfs efivarfs /sys/firmware/efi/efivars
 
+# Trustee uses this path for tdx report
+mkdir -p /sys/kernel/config
+mount -t configfs none /sys/kernel/config
+
+# Verify that the TSM report path exists; required for attestation. Panic if missing.
+if [ ! -e /sys/kernel/config/tsm/report ]; then
+    panic "TSM report path /sys/kernel/config/tsm/report not found"
+fi
+
 # Configure the network
 configure_networking
 

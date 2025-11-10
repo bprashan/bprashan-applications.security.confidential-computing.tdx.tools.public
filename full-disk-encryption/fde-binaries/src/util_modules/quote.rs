@@ -194,15 +194,15 @@ impl QuoteV4 {
     ///
     /// # Returns
     ///
-    /// This function returns a `String` representing the SEAM version
+    /// Returns a hex string representation of the SEAM version (e.g., "030000000000000000000000000000000").
+    /// This format is required by Trustee attestation policies.
     pub fn get_intel_tdx_module_version(&self) -> String {
         let tcb_svn = &self.report_body.tee_tcb_svn.tcb_svn;
 
-        let seam_minor_version = tcb_svn[0];
-        let seam_major_version = tcb_svn[1];
+        // Convert TCB SVN bytes to hex string format required by Trustee
+        let seam_version: String = tcb_svn.iter().map(|byte| format!("{:02x}", byte)).collect();
 
-        let seam_version = (seam_major_version as u16 * 256) + seam_minor_version as u16;
-        seam_version.to_string()
+        seam_version
     }
 }
 

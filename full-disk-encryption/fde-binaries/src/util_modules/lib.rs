@@ -6,3 +6,4 @@ pub mod ovmf_var;
 pub mod quote;
 pub mod rsa_ext;
 pub mod disk;
+pub mod kbs_protocol_api;

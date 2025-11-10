@@ -5,7 +5,6 @@ use std::process::Command;
 use std::io::Write;
 
 pub const K_RFS_BIT_LENGTH: usize = 256;
-pub const K_RFS_ALGO : &str = "AES";
 
 /// Opens the root device and attempts to load it as a LUKS2 encrypted device.
 ///

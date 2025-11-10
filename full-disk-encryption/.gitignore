@@ -1,6 +1,6 @@
 .vscode/
 fde-binaries/target
-ita-kbs/
+fde-binaries/Cargo.lock
 canonical-tdx/
 data/
 tools/image/*.fd

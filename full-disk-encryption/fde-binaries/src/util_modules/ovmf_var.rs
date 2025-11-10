@@ -9,7 +9,7 @@ use std::str::FromStr;
 use rsa::{pkcs8::DecodePublicKey, RsaPublicKey};
 
 const KBS_URL_GUID: &str = "KBSURL-0d9b4a60-e0bf-4a66-b9b1-db1b98f87770";
-const KBS_K_RFS_ID_GUID: &str = "KBSKRFSID-dc001d1f-60a1-4e1e-853e-42e9ab0e8b88";
+const KBS_K_PATH_GUID: &str = "KBSKPATH-dc001d1f-60a1-4e1e-853e-42e9ab0e8b88";
 const TDBOOTMODE_GUID: &str = "TDBOOTMODE-8093baf3-b42c-4a46-9c60-02888f011f03";
 const PK_KR_GUID: &str = "PK_KR-4517e507-9b4b-479d-b422-2562900361e3";
 
@@ -26,7 +26,7 @@ pub struct OvmfParamsGetQuote {
 #[derive(Debug)]
 pub struct OvmfParamsFdeBoot {
     pub kbs_url: Vec<u8>,
-    pub kbs_k_rfs_id: Vec<u8>,
+    pub kbs_k_path: Vec<u8>,
 }
 
 impl OvmfParamsBootMode {
@@ -99,7 +99,7 @@ impl OvmfParamsFdeBoot {
     /// # Parameters
     ///
     /// - `kbs_url`: A vector of bytes representing the KBS URL.
-    /// - `kbs_k_rfs_id`: A vector of bytes representing the RFS key ID used by the KBS.
+    /// - `kbs_k_path`: A vector of bytes representing the RFS key path used by the KBS.
     ///
     /// # Errors
     ///
@@ -118,16 +118,16 @@ impl OvmfParamsFdeBoot {
             .read(&kbs_url_variable)
             .expect("Failed to read KBS URL");
 
-        // Read KBS RFS key ID from OVMF.
-        let kbs_k_rfs_id_variable = Variable::from_str(KBS_K_RFS_ID_GUID)
-            .expect("Failed to create variable for KBS RFS key ID");
-        let (kbs_k_rfs_id_bytes, _key_id_data_flags) = var_manager
-            .read(&kbs_k_rfs_id_variable)
-            .expect("Failed to read KBS RFS key ID");
+        // Read KBS RFS key path from OVMF.
+        let kbs_k_path_variable = Variable::from_str(KBS_K_PATH_GUID)
+            .expect("Failed to create variable for KBS RFS key path");
+        let (kbs_k_path_bytes, _key_id_data_flags) = var_manager
+            .read(&kbs_k_path_variable)
+            .expect("Failed to read KBS RFS key path");
 
         Ok(Self {
             kbs_url: kbs_url_bytes,
-            kbs_k_rfs_id: kbs_k_rfs_id_bytes,
+            kbs_k_path: kbs_k_path_bytes,
         })
     }
 }

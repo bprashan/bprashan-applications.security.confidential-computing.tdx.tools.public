@@ -21,10 +21,10 @@
 # TD_FDE_BOOT Boot Mode
 # - cleanup_td_fde_boot: Cleans up any remnants from a previous run, including unmounting partitions and disconnecting devices.
 # - reencrypt_luks_partition: Re-encrypts the existing LUKS partition with the provided key.
-# - modify_ovmf: Enrolls the TD boot mode, KBS URL, and root filesystem key ID into the OVMF firmware.
+# - modify_ovmf: Enrolls the TD boot mode, KBS URL, and root filesystem key path into the OVMF firmware.
 
 MY_PATH="$(dirname "$(readlink -f "$0")")"
-pushd ${MY_PATH}
+pushd "${MY_PATH}"
 
 # Determine the username of the user who initiated the script, even if it is being run with elevated privileges.
 if [[ -z "$SUDO_USER" ]]; then
@@ -55,7 +55,7 @@ function cleanup_get_quote() {
 
     # Unmount anything mounted to directory used to mount partition from base image.
     if mount | grep $PATH_MNT_NBT >/dev/null; then
-        umount $PATH_MNT_NBT
+        umount "$PATH_MNT_NBT"
     fi
 
     # If any nbd is connected to base image, disconnect it.
@@ -65,7 +65,7 @@ function cleanup_get_quote() {
         local nbd_device=$(echo "$nbd_line" | grep -oE '\-\-connect=/dev/nbd[0-9]+' | cut -d= -f2)
 
         if [ -n "$nbd_device" ]; then
-            echo "Found $PATH_IMG_IN connected to $nbd_device. Disconnecting..."
+            echo "Found \"$PATH_IMG_IN\" connected to \"$nbd_device\". Disconnecting..."
 
             qemu-nbd --disconnect "$nbd_device"
         fi
@@ -73,7 +73,7 @@ function cleanup_get_quote() {
 
     # Check if output image is associated with any loop device.
     # If it is, find corresponding loop device and unmount partitions individually.
-    if losetup -a | grep $PATH_IMG_OUT >/dev/null; then
+    if losetup -a | grep "$PATH_IMG_OUT" >/dev/null; then
         # To not accidentally unmount system folders, make sure that PATH_MNT_ROOTFS is defined and set to a path inside the project directory.
         [ -n "$PATH_MNT_ROOTFS" ] && [[ "$PATH_MNT_ROOTFS" == $MY_PATH* ]] || exit 1
 
@@ -108,36 +108,35 @@ function cleanup_get_quote() {
 
         # Close virtual device providing a decrypted view to encrypted root partition.
         if cryptsetup status "$LABEL_DEV_ROOTFS_DEC" 2>/dev/null | grep -q "is active"; then
-            cryptsetup close $LABEL_DEV_ROOTFS_DEC
+            cryptsetup close $LABEL_DEV_ROOTFS_DEC || echo "Warn: failed to close mapper $LABEL_DEV_ROOTFS_DEC"
         fi
 
         # Find all loop devices attached to the encrypted image and detach them.
-        local loop_devs=$(losetup -a | grep "$PATH_IMG_OUT" | cut -d: -f1)
-        for loop_dev in $loop_devs; do
-            losetup -d "$loop_dev"
+        losetup -a | grep -F -- "$PATH_IMG_OUT" | cut -d: -f1 | while read -r loop_dev; do
+            losetup -d "$loop_dev" || echo "Warn: failed to detach $loop_dev"
         done
     fi
 
     # If present, remove old output image.
-    rm -f $PATH_IMG_OUT
+    rm -f "$PATH_IMG_OUT"
 
     # If present, remove temporary folder is to prepare output image in last run
-    rm -rf $PATH_TMP_DIR
+    rm -rf "$PATH_TMP_DIR"
 }
 
 # Function cleans after last TD_FDE_BOOT run, which might have failed at any point.
 function cleanup_td_fde_boot() {
-    if losetup -a | grep $PATH_IMG_OUT >/dev/null; then
+    if [ -n "$PATH_IMG_OUT" ] && losetup -a | grep "$PATH_IMG_OUT" >/dev/null; then
         # Close virtual device providing a decrypted view to encrypted root partition.
         if cryptsetup status "$LABEL_DEV_ROOTFS_DEC" 2>/dev/null | grep -q "is active"; then
-            cryptsetup close $LABEL_DEV_ROOTFS_DEC
+            cryptsetup close "$LABEL_DEV_ROOTFS_DEC" || echo "Warn: failed to close $LABEL_DEV_ROOTFS_DEC"
         fi
 
         # Find all loop devices attached to the encrypted image and detach them.
-        local loop_devs=$(losetup -a | grep "$PATH_IMG_OUT" | cut -d: -f1)
-        for loop_dev in $loop_devs; do
-            losetup -d "$loop_dev"
+        losetup -a | grep -F -- "$PATH_IMG_OUT" | cut -d: -f1 | while read -r loop_dev; do
+            losetup -d "$loop_dev" || echo "Warn: failed to detach $loop_dev"
         done
+
     fi
 
     # Remove named pipes
@@ -153,13 +152,13 @@ Boot modes:
     TD_FDE_BOOT     Perform encryption with provided key.
 
 Options:
-    -c <KBS_CERT_PATH>      Path to TLS certificate of ITA KBS; mandatory for TD boot mode \"GET_QUOTE\", forbidden for TD boot mode \"TD_FDE_BOOT\"
+    -c <KBS_CERT_PATH>      Path to TLS certificate of Trustee KBS; mandatory for TD boot mode \"GET_QUOTE\", forbidden for TD boot mode \"TD_FDE_BOOT\"
     -p <PATH_IMG_IN>        Path to the input image; mandatory for TD boot mode \"GET_QUOTE\" and \"TD_FDE_BOOT\"
     -e <PATH_IMG_OUT>       Path to the output image; optional for TD boot mode \"GET_QUOTE\" and \"TD_FDE_BOOT\"; default is \"GET_QUOTE\" added as a postfix for \"GET_QUOTE\" and \"TD_FDE_BOOT\" added as a postfix for \"TD_FDE_BOOT\".
     -f <PK_KR_PATH>         Path to the public key from key pair used for key retrieval
-    -u <KBS_URL>            URL of ITA KBS; mandatory for TD boot mode \"TD_FDE_BOOT\", forbidden for TD boot mode \"GET_QUOTE\"
+    -u <KBS_URL>            URL of Trustee KBS; mandatory for TD boot mode \"TD_FDE_BOOT\", forbidden for TD boot mode \"GET_QUOTE\"
     -k <K_RFS_HEX>          Key for encryption of root filesystem in hex encoding; mandatory for TD boot mode \"TD_FDE_BOOT\", forbidden for TD boot mode \"GET_QUOTE\"
-    -i <K_RFS_ID>           Key ID used by ITA KBS for root filesystem encryption key; mandatory for TD boot mode \"TD_FDE_BOOT\", forbidden for TD boot mode \"GET_QUOTE\"
+    -i <K_PATH>             Path used by Trustee KBS for root filesystem encryption key; mandatory for TD boot mode \"TD_FDE_BOOT\", forbidden for TD boot mode \"GET_QUOTE\"
     -d <TMP_K_RFS>          Path to store/read the dummy key used for encryption of root filesystem; mandatory for TD boot mode \"GET_QUOTE\" and \"TD_FDE_BOOT\"
 
     -r <SIZE_PART_ROOTFS>   Size of root filesystem partition; optional for TD boot mode \"GET_QUOTE\", forbidden for TD boot mode \"TD_FDE_BOOT\"; default is 10GB
@@ -201,7 +200,7 @@ function process_args() {
         b) SIZE_PART_BOOT=$OPTARG ;;
         p) PATH_IMG_IN=$OPTARG ;;
         k) K_RFS_HEX=$OPTARG ;;
-        i) K_RFS_ID=$OPTARG ;;
+        i) K_PATH=$OPTARG ;;
         u) KBS_URL=$OPTARG ;;
         c) KBS_CERT_PATH=$OPTARG ;;
         e) PATH_IMG_OUT=$OPTARG ;;
@@ -269,28 +268,28 @@ check_params_empty() {
 function check_args_env() {
     check_params_filled PATH_IMG_IN TMP_K_RFS
 
-    if [ ! -f $TMP_K_RFS ]; then
+    if [ ! -f "$TMP_K_RFS" ]; then
         echo "Cannot find file with dummy key used for the initial encryption of root file system at \"$TMP_K_RFS\"."
         exit 1
     fi
 
-    if [ ! -f $PATH_IMG_IN ]; then
+    if [ ! -f "$PATH_IMG_IN" ]; then
         echo "Input image not present at \"$PATH_IMG_IN\"."
         exit 1
     fi
 
     if [[ $TD_BOOT_MODE == "GET_QUOTE" ]]; then
         check_params_filled KBS_CERT_PATH PK_KR_PATH
-        check_params_empty KBS_URL K_RFS_HEX K_RFS_ID
+        check_params_empty KBS_URL K_RFS_HEX K_PATH
 
-        if [ ! -f $PK_KR_PATH ]; then
+        if [ ! -f "$PK_KR_PATH" ]; then
             echo "Public key from key pair used for key retrieval is not found at provided path \"$PK_KR_PATH\"."
             usage
             exit 1
         fi
 
-        if [ ! -f $KBS_CERT_PATH ]; then
-            echo "TLS certificate of ITA KBS not found at provided path \"$KBS_CERT_PATH\"."
+        if [ ! -f "$KBS_CERT_PATH" ]; then
+            echo "TLS certificate of Trustee KBS not found at provided path \"$KBS_CERT_PATH\"."
             usage
             exit 1
         fi
@@ -315,8 +314,8 @@ function check_args_env() {
             fi
         fi
 
-    elif [[ $TD_BOOT_MODE == "TD_FDE_BOOT" ]]; then
-        check_params_filled KBS_URL K_RFS_HEX K_RFS_ID
+    elif [[ "$TD_BOOT_MODE" == "TD_FDE_BOOT" ]]; then
+        check_params_filled KBS_URL K_RFS_HEX K_PATH
         check_params_empty KBS_CERT_PATH SIZE_PART_ROOTFS SIZE_PART_BOOT PK_KR_PATH
 
         # Input image must be an raw image.
@@ -330,7 +329,6 @@ function check_args_env() {
             usage
             exit 1
         fi
-
 
         if [ -z "$PATH_IMG_OUT" ]; then
             # If no output file path was provided, create a default output file path
@@ -372,7 +370,7 @@ function modify_ovmf() {
         python3 -m pip install ovmfkeyenroll
     fi
 
-    rm -rf $OVMF_OUTPUT
+    rm -rf "${OVMF_OUTPUT}"
 
     # Enroll TD boot mode to OVMF.
     printf $TD_BOOT_MODE>td_boot_mode
@@ -396,13 +394,13 @@ function modify_ovmf() {
         python3 enroll_vars.py -i ${OVMF_OUTPUT} -o ${OVMF_OUTPUT} -n $VARIABLE_NAME -g $VARIABLE_GUID -d $VARIABLE_VALUE_FILE_PATH
 
         # Enroll id of root filesystem key that was assigned by KBS, to OVMF.
-        printf $K_RFS_ID>kbs_k_rfs_id
-        VARIABLE_NAME="KBSKRFSID"
+        printf "$K_PATH">kbs_k_path
+        VARIABLE_NAME="KBSKPATH"
         VARIABLE_GUID="dc001d1f-60a1-4e1e-853e-42e9ab0e8b88"
-        VARIABLE_VALUE_FILE_PATH="kbs_k_rfs_id"
+        VARIABLE_VALUE_FILE_PATH="kbs_k_path"
         python3 enroll_vars.py -i ${OVMF_OUTPUT} -o ${OVMF_OUTPUT} -n $VARIABLE_NAME -g $VARIABLE_GUID -d $VARIABLE_VALUE_FILE_PATH
 
-        rm -rf kbs_url kbs_k_rfs_id
+        rm -rf kbs_url kbs_k_path
     fi
 
     # Cleanup
@@ -457,6 +455,12 @@ function create_luks_partition() {
     # Use dummy key for the initial encryption of root file system.
     local KEY_HEX=$(< ${TMP_K_RFS})
 
+    if [[ ${#KEY_HEX} -ne $((EXPECTED_K_RFS_SIZE / 4)) ]]; then
+        echo "Dummy key for encryption of root filesystem must be ${EXPECTED_K_RFS_SIZE} bits long."
+        usage
+        exit 1
+    fi
+
     # Decode hex-encoded key, and set up an encrypted partition using LUKS2 with AES-GCM encryption using a 256bit key and AEAD for integrity protection.
     echo -n "$KEY_HEX" | xxd -r -p |
         cryptsetup -v -q luksFormat --encrypt --type luks2 \
@@ -480,7 +484,8 @@ function reencrypt_luks_partition() {
     local label_dev_rootfs_dec=$3
 
     # Find an unused loop device and attach the image to it.
-    local loop_dev=$(losetup --find --show $PATH_IMG_OUT)
+    local loop_dev=$(losetup --find --show "$PATH_IMG_OUT")
+    echo "Attached loop device: $loop_dev"
 
     # Inform the operating system kernel of partition table changes of the image file.
     partprobe ${loop_dev}
@@ -489,8 +494,17 @@ function reencrypt_luks_partition() {
     local part_rootfs=$(lsblk -lno NAME,PARTLABEL | grep 'rootfs' | awk '{print $1}' | tail -n 1)
     part_rootfs="/dev/${part_rootfs}"
 
+    echo "Detected rootfs partition: $part_rootfs"
+
     # Read dummy key used for initial root file system encryption.
     local key_old_hex=$(< ${TMP_K_RFS})
+
+    # Pre-check old key correctness (Checking dummy key before adding new key)
+    if ! echo -n "$key_old_hex" | xxd -r -p | cryptsetup luksOpen --test-passphrase "$part_rootfs" --key-file -; then
+        echo "Error: supplied dummy key does not unlock $part_rootfs (wrong TMP_K_RFS)."
+        losetup -d "$loop_dev"
+        exit 1
+    fi
 
     # Add the new key to the LUKS partition using named pipes
     mkfifo /tmp/key_old_fifo /tmp/key_new_fifo
@@ -498,7 +512,7 @@ function reencrypt_luks_partition() {
     echo -n "$key_new_hex" | xxd -r -p > /tmp/key_new_fifo &
 
     # Add the new key to the LUKS partition.
-    cryptsetup luksAddKey $part_rootfs --key-file=/tmp/key_old_fifo --new-keyfile=/tmp/key_new_fifo || {
+    cryptsetup luksAddKey "$part_rootfs" --key-file=/tmp/key_old_fifo --new-keyfile=/tmp/key_new_fifo || {
         echo "Error: Failed to add new key to LUKS partition, returned with status: $?."
         cleanup_td_fde_boot
         exit 1
@@ -522,7 +536,7 @@ function reencrypt_luks_partition() {
     }
 
     # Close virtual device providing decrypted access to root partition.
-    cryptsetup close $label_dev_rootfs_dec || {
+    cryptsetup close "$label_dev_rootfs_dec" || {
         echo "Error: Failed to close virtual device providing decrypted access to root partition, returned with status: $?."
         cleanup_td_fde_boot
         exit 1
@@ -578,7 +592,7 @@ function fill_rootfs() {
 
     # Create temporary directory and mount virtual device providing decrypted access to encrypted root partition to this directory.
     mkdir -p ${PATH_MNT_ROOTFS}
-    mount $DEV_ROOTFS_DEC ${PATH_MNT_ROOTFS}
+    mount "$DEV_ROOTFS_DEC" ${PATH_MNT_ROOTFS}
 
     # Mount the boot partition inside the "boot" folder of the root partition.
     mkdir -p ${PATH_MNT_BOOT}
@@ -594,8 +608,11 @@ function fill_rootfs() {
 
     # Find the first unused network block device (nbd) and bind the base image to it.
     local UNUSED_DEV_NBD=""
-    for TMP_DEV_NBD in /dev/nbd*; do
-        if ! grep -q "$TMP_DEV_NBD" /proc/mounts && [ ! -e "${TMP_DEV_NBD}p1" ]; then
+    for TMP_DEV_NBD in /dev/nbd{0..15}; do
+        # Check device is unused: not in /proc/mounts, no partition p1, and no partitions in lsblk
+        if ! grep -q "$TMP_DEV_NBD" /proc/mounts \
+            && [ ! -e "${TMP_DEV_NBD}p1" ] \
+            && ! lsblk -n -o NAME "$TMP_DEV_NBD" 2>/dev/null | grep -q "${TMP_DEV_NBD##*/}p"; then
             UNUSED_DEV_NBD="$TMP_DEV_NBD"
             break
         fi
@@ -607,6 +624,7 @@ function fill_rootfs() {
         echo "Using NBD device $UNUSED_DEV_NBD."
     fi
     qemu-nbd --connect="$UNUSED_DEV_NBD" "$PATH_IMG_IN"
+    # Allow some time for the device to be ready
     sleep 3
 
     # Create a temporary directory that is used to mount partitions from the base image to.
@@ -642,7 +660,7 @@ function fill_rootfs() {
     cp netplan.yaml ${PATH_MNT_ROOTFS}/etc/netplan
 
     # Copy KBS certificate into the root partition.
-    cp $KBS_CERT_PATH ${PATH_MNT_ROOTFS}/etc/kbs.crt
+    cp "$KBS_CERT_PATH" "${PATH_MNT_ROOTFS}/etc/kbs.crt"
 
     # Provide the necessary system interfaces and directories within the chroot environment.
     mount -t proc none ${PATH_MNT_ROOTFS}/proc
@@ -777,15 +795,15 @@ function cleanup_on_interrupt() {
 
 set -e
 
+process_args "$@"
+
 echo "=============== Build Start in mode $TD_BOOT_MODE ==============="
 echo "=============== Check Validity of Parameters ==============="
-
-process_args "$@"
 
 check_args_env
 
 # Setup trap to catch interruptions
-trap cleanup_on_interrupt SIGINT
+trap cleanup_on_interrupt SIGINT SIGTERM 
 
 OVMF_INPUT=${MY_PATH}/../../data/ovmf-extracted/usr/share/ovmf/OVMF.tdx.fd
 OVMF_OUTPUT=OVMF_${TD_BOOT_MODE}.fd
@@ -802,8 +820,9 @@ else
 fi
 
 echo "=============== Set Owner of Created OVMF and TD Image ============="
-chown $LOGIN_USER:$LOGIN_USER $OVMF_OUTPUT
-chown $LOGIN_USER:$LOGIN_USER $PATH_IMG_OUT
+USER_GROUP=$(id -gn "$LOGIN_USER")
+chown $LOGIN_USER:$USER_GROUP $OVMF_OUTPUT
+chown $LOGIN_USER:$USER_GROUP $PATH_IMG_OUT
 
 # Output full paths of the created files
 echo "=============== Created Files ================"
