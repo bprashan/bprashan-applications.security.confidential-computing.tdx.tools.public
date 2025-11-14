@@ -74,7 +74,7 @@ then
         for container in trustee-vault trustee-as trustee-kbs; do
             if docker ps -a --format "{{.Names}}" | grep -q "^${container}$"; then
                 if ! docker ps --format "{{.Names}}" | grep -q "^${container}$"; then
-                    docker start $container && log_info "$container started"
+                    docker start "$container" && log_info "$container started"
                 else
                     log_info "$container already running"
                 fi
@@ -123,7 +123,7 @@ existing_containers=$(docker ps -a --filter name=trustee --format "{{.Names}}" 2
 
 if [ -n "$existing_containers" ]; then
     log_warn "Removing existing Trustee containers..."
-    echo "$existing_containers" | while read container; do
+    echo "$existing_containers" | while read -r container; do
         docker stop "$container" 2>/dev/null && log_info "Stopped $container"
         docker rm "$container" 2>/dev/null && log_info "Removed $container"
     done
@@ -204,9 +204,9 @@ log_step "Step 2: Building Docker images"
 
 log_info "Building Attestation Service image..."
 if ! docker build \
-    --build-arg http_proxy=$http_proxy \
-    --build-arg https_proxy=$https_proxy \
-    --build-arg no_proxy=$no_proxy \
+    --build-arg http_proxy="$http_proxy" \
+    --build-arg https_proxy="$https_proxy" \
+    --build-arg no_proxy="$no_proxy" \
     --ulimit nofile=90000:90000 \
     -f attestation-service/docker/as-grpc/Dockerfile \
     -t trustee-as:latest . 2>&1 | tee /tmp/as-build.log; then
@@ -219,9 +219,9 @@ log_info "Attestation Service image built successfully"
 
 log_info "Building KBS image with Vault support..."
 if ! docker build \
-    --build-arg http_proxy=$http_proxy \
-    --build-arg https_proxy=$https_proxy \
-    --build-arg no_proxy=$no_proxy \
+    --build-arg http_proxy="$http_proxy" \
+    --build-arg https_proxy="$https_proxy" \
+    --build-arg no_proxy="$no_proxy" \
     --ulimit nofile=90000:90000 \
     -f kbs/docker/coco-as-grpc/Dockerfile \
     -t trustee-kbs:latest . 2>&1 | tee /tmp/kbs-build.log; then
@@ -255,12 +255,12 @@ docker run -d \
     -p 8200:8200 \
     -e VAULT_DEV_ROOT_TOKEN_ID="$VAULT_ROOT_TOKEN" \
     -e VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200 \
-    -e no_proxy=$no_proxy \
-    -e https_proxy=$https_proxy \
-    -e http_proxy=$http_proxy \
-    -e NO_PROXY=$NO_PROXY \
-    -e HTTPS_PROXY=$HTTPS_PROXY \
-    -e HTTP_PROXY=$HTTP_PROXY \
+    -e no_proxy="$no_proxy" \
+    -e https_proxy="$https_proxy" \
+    -e http_proxy="$http_proxy" \
+    -e NO_PROXY="$NO_PROXY" \
+    -e HTTPS_PROXY="$HTTPS_PROXY" \
+    -e HTTP_PROXY="$HTTP_PROXY" \
     --cap-add=IPC_LOCK \
     hashicorp/vault:1.20 > /dev/null 2>&1 || error_exit "Failed to start Vault container"
 
@@ -270,6 +270,7 @@ log_info "Waiting for Vault to initialize..."
 # Wait for Vault to be ready
 MAX_RETRIES=30
 RETRY_COUNT=0
+VAULT_READY=false
 
 while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
     if docker exec -e VAULT_ADDR='http://127.0.0.1:8200' trustee-vault vault status >/dev/null 2>&1; then
@@ -304,7 +305,8 @@ log_info "KV secrets engine enabled at path: keybroker"
 # ============================================
 log_step "Step 6: Creating configuration files"
 
-export SYSTEM_IP=$(hostname -I | awk '{print $1}')
+SYSTEM_IP=$(hostname -I | awk '{print $1}')
+export SYSTEM_IP
 log_info "Detected system IP: $SYSTEM_IP"
 
 log_info "Creating Attestation Service configuration..."
@@ -373,17 +375,18 @@ docker run -d \
     --name trustee-as \
     --network trustee-net \
     --restart unless-stopped \
+    --ulimit nofile=90000:90000 \
     -p 50004:50004 \
-    -v $(pwd)/config-data/as-config.json:/opt/attestation-service/config.json:ro \
-    -v $(pwd)/config-data/reference-values:/opt/attestation-service/reference-values \
-    -v $(pwd)/attestation-service/docs/sgx_default_qcnl.conf:/etc/sgx_default_qcnl.conf:ro \
+    -v "$(pwd)/config-data/as-config.json:/opt/attestation-service/config.json:ro" \
+    -v "$(pwd)/config-data/reference-values:/opt/attestation-service/reference-values" \
+    -v "$(pwd)/attestation-service/docs/sgx_default_qcnl.conf:/etc/sgx_default_qcnl.conf:ro" \
     -e RUST_LOG=debug \
-    -e no_proxy=$no_proxy \
-    -e https_proxy=$https_proxy \
-    -e http_proxy=$http_proxy \
-    -e NO_PROXY=$NO_PROXY \
-    -e HTTPS_PROXY=$HTTPS_PROXY \
-    -e HTTP_PROXY=$HTTP_PROXY \
+    -e no_proxy="$no_proxy" \
+    -e https_proxy="$https_proxy" \
+    -e http_proxy="$http_proxy" \
+    -e NO_PROXY="$NO_PROXY" \
+    -e HTTPS_PROXY="$HTTPS_PROXY" \
+    -e HTTP_PROXY="$HTTP_PROXY" \
     trustee-as:latest \
     grpc-as --config-file /opt/attestation-service/config.json --socket 0.0.0.0:50004 > /dev/null 2>&1 || error_exit "Failed to start Attestation Service"
 
@@ -406,18 +409,19 @@ docker run -d \
     --name trustee-kbs \
     --network trustee-net \
     --restart unless-stopped \
+    --ulimit nofile=90000:90000 \
     -p 8080:8080 \
-    -v $(pwd)/config-data/kbs-config.toml:/opt/kbs/kbs-config.toml:ro \
-    -v $(pwd)/config-data/tls-cert.pem:/opt/kbs/certs/tls-cert.pem:ro \
-    -v $(pwd)/config-data/tls-key.pem:/opt/kbs/certs/tls-key.pem:ro \
-    -v $(pwd)/config-data/auth-public.pub:/opt/kbs/certs/auth-public.pub:ro \
+    -v "$(pwd)/config-data/kbs-config.toml:/opt/kbs/kbs-config.toml:ro" \
+    -v "$(pwd)/config-data/tls-cert.pem:/opt/kbs/certs/tls-cert.pem:ro" \
+    -v "$(pwd)/config-data/tls-key.pem:/opt/kbs/certs/tls-key.pem:ro" \
+    -v "$(pwd)/config-data/auth-public.pub:/opt/kbs/certs/auth-public.pub:ro" \
     -e RUST_LOG=debug \
-    -e no_proxy=$no_proxy \
-    -e https_proxy=$https_proxy \
-    -e http_proxy=$http_proxy \
-    -e NO_PROXY=$NO_PROXY \
-    -e HTTPS_PROXY=$HTTPS_PROXY \
-    -e HTTP_PROXY=$HTTP_PROXY \
+    -e no_proxy="$no_proxy" \
+    -e https_proxy="$https_proxy" \
+    -e http_proxy="$http_proxy" \
+    -e NO_PROXY="$NO_PROXY" \
+    -e HTTPS_PROXY="$HTTPS_PROXY" \
+    -e HTTP_PROXY="$HTTP_PROXY" \
     trustee-kbs:latest \
     kbs --config-file /opt/kbs/kbs-config.toml > /dev/null 2>&1 || error_exit "Failed to start KBS"
 

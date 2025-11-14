@@ -66,7 +66,7 @@ impl TrusteeKbs {
         let kbs_certs_pem = vec![cert_pem];
 
         Ok(Self {
-            kbs_url: kbs_url,
+            kbs_url,
             kbs_cert: kbs_certs_pem,
         })
     }
