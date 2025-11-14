@@ -29,10 +29,10 @@ fi
 
 # Define temporary directories used for following steps
 PATH_TMP_DIR="$MY_PATH/tmp_fde"
-PATH_MNT_ROOTFS=${PATH_TMP_DIR}/mnt_root
-PATH_MNT_BOOT=${PATH_MNT_ROOTFS}/boot
-PATH_MNT_EFI=${PATH_MNT_BOOT}/efi
-PATH_MNT_NBT=${PATH_TMP_DIR}/mnt_nbd
+PATH_MNT_ROOTFS="${PATH_TMP_DIR}/mnt_root"
+PATH_MNT_BOOT="${PATH_MNT_ROOTFS}/boot"
+PATH_MNT_EFI="${PATH_MNT_BOOT}/efi"
+PATH_MNT_NBT="${PATH_TMP_DIR}/mnt_nbd"
 
 # Define labels for encrypted root partition and for virtual device providing decrypted access to this partition.
 # Label uses a hash of the script directory to make it unique for the invocation of this script instance.
@@ -48,7 +48,7 @@ function cleanup_get_quote() {
     local PATH_IMG_IN=$1
 
     # Unmount anything mounted to directory used to mount partition from base image.
-    if mount | grep $PATH_MNT_NBT >/dev/null; then
+    if mount | grep -q "$PATH_MNT_NBT"; then
         umount "$PATH_MNT_NBT"
     fi
 
@@ -56,7 +56,8 @@ function cleanup_get_quote() {
     local nbd_line=$(ps m -C qemu-nbd --no-headers | grep "$PATH_IMG_IN")
     if [ -n "$nbd_line" ]; then
         # Extract the nbd device (e.g., /dev/nbd0)
-        local nbd_device=$(echo "$nbd_line" | grep -oE '\-\-connect=/dev/nbd[0-9]+' | cut -d= -f2)
+        local nbd_device
+        nbd_device=$(echo "$nbd_line" | grep -oE '\-\-connect=/dev/nbd[0-9]+' | cut -d= -f2)
 
         if [ -n "$nbd_device" ]; then
             echo "Found \"$PATH_IMG_IN\" connected to \"$nbd_device\". Disconnecting..."
@@ -67,42 +68,42 @@ function cleanup_get_quote() {
 
     # Check if output image is associated with any loop device.
     # If it is, find corresponding loop device and unmount partitions individually.
-    if losetup -a | grep "$PATH_IMG_OUT" >/dev/null; then
+    if losetup -a | grep -q "$PATH_IMG_OUT"; then
         # To not accidentally unmount system folders, make sure that PATH_MNT_ROOTFS is defined and set to a path inside the project directory.
-        [ -n "$PATH_MNT_ROOTFS" ] && [[ "$PATH_MNT_ROOTFS" == $MY_PATH* ]] || exit 1
+        [ -n "$PATH_MNT_ROOTFS" ] && [[ "$PATH_MNT_ROOTFS" == "$MY_PATH"* ]] || exit 1
 
-        if mount | grep -q ${PATH_MNT_ROOTFS}/dev/pts; then
-            umount ${PATH_MNT_ROOTFS}/dev/pts
+        if mount | grep -q "${PATH_MNT_ROOTFS}/dev/pts"; then
+            umount "${PATH_MNT_ROOTFS}/dev/pts"
         fi
-        if mount | grep -q ${PATH_MNT_ROOTFS}/dev; then
-            umount ${PATH_MNT_ROOTFS}/dev
+        if mount | grep -q "${PATH_MNT_ROOTFS}/dev"; then
+            umount "${PATH_MNT_ROOTFS}/dev"
         fi
-        if mount | grep -q ${PATH_MNT_ROOTFS}/run; then
-            umount -f ${PATH_MNT_ROOTFS}/run
+        if mount | grep -q "${PATH_MNT_ROOTFS}/run"; then
+            umount -f "${PATH_MNT_ROOTFS}/run"
         fi
-        if mount | grep -q ${PATH_MNT_ROOTFS}/tmp; then
-            umount ${PATH_MNT_ROOTFS}/tmp
+        if mount | grep -q "${PATH_MNT_ROOTFS}/tmp"; then
+            umount "${PATH_MNT_ROOTFS}/tmp"
         fi
-        if mount | grep -q ${PATH_MNT_ROOTFS}/sys; then
-            umount -l ${PATH_MNT_ROOTFS}/sys
+        if mount | grep -q "${PATH_MNT_ROOTFS}/sys"; then
+            umount -l "${PATH_MNT_ROOTFS}/sys"
         fi
-        if mount | grep -q ${PATH_MNT_ROOTFS}/proc; then
-            umount ${PATH_MNT_ROOTFS}/proc
+        if mount | grep -q "${PATH_MNT_ROOTFS}/proc"; then
+            umount "${PATH_MNT_ROOTFS}/proc"
         fi
 
-        if mount | grep ${PATH_MNT_ROOTFS} | grep -q ${PATH_MNT_EFI}; then
-            umount ${PATH_MNT_EFI}
+        if mount | grep "${PATH_MNT_ROOTFS}" | grep -q "${PATH_MNT_EFI}"; then
+            umount "${PATH_MNT_EFI}"
         fi
-        if mount | grep ${PATH_MNT_ROOTFS} | grep -q ${PATH_MNT_BOOT}; then
-            umount ${PATH_MNT_BOOT}
+        if mount | grep "${PATH_MNT_ROOTFS}" | grep -q "${PATH_MNT_BOOT}"; then
+            umount "${PATH_MNT_BOOT}"
         fi
-        if mount | grep -q ${PATH_MNT_ROOTFS}; then
-            umount ${PATH_MNT_ROOTFS}
+        if mount | grep -q "${PATH_MNT_ROOTFS}"; then
+            umount "${PATH_MNT_ROOTFS}"
         fi
 
         # Close virtual device providing a decrypted view to encrypted root partition.
         if cryptsetup status "$LABEL_DEV_ROOTFS_DEC" 2>/dev/null | grep -q "is active"; then
-            cryptsetup close $LABEL_DEV_ROOTFS_DEC || echo "Warn: failed to close mapper $LABEL_DEV_ROOTFS_DEC"
+            cryptsetup close "$LABEL_DEV_ROOTFS_DEC" || echo "Warn: failed to close mapper $LABEL_DEV_ROOTFS_DEC"
         fi
 
         # Find all loop devices attached to the encrypted image and detach them.
@@ -290,22 +291,22 @@ function modify_ovmf() {
     # Enroll public key for key enrollment (PK_KR) to OVMF.
     VARIABLE_NAME="PK_KR"
     VARIABLE_GUID="4517e507-9b4b-479d-b422-2562900361e3"
-    VARIABLE_VALUE_FILE_PATH=$PK_KR_PATH
-    python3 enroll_vars.py -i ${OVMF_INPUT} -o ${OVMF_OUTPUT} -n $VARIABLE_NAME -g $VARIABLE_GUID -d $VARIABLE_VALUE_FILE_PATH
+    VARIABLE_VALUE_FILE_PATH="$PK_KR_PATH"
+    python3 enroll_vars.py -i "${OVMF_INPUT}" -o "${OVMF_OUTPUT}" -n "$VARIABLE_NAME" -g "$VARIABLE_GUID" -d "$VARIABLE_VALUE_FILE_PATH"
 
     # Enroll URL of KBS to OVMF.
-    printf $KBS_URL>kbs_url
+    printf "$KBS_URL" > kbs_url
     VARIABLE_NAME="KBSURL"
     VARIABLE_GUID="0d9b4a60-e0bf-4a66-b9b1-db1b98f87770"
     VARIABLE_VALUE_FILE_PATH="kbs_url"
-    python3 enroll_vars.py -i ${OVMF_OUTPUT} -o ${OVMF_OUTPUT} -n $VARIABLE_NAME -g $VARIABLE_GUID -d $VARIABLE_VALUE_FILE_PATH
+    python3 enroll_vars.py -i "${OVMF_OUTPUT}" -o "${OVMF_OUTPUT}" -n "$VARIABLE_NAME" -g "$VARIABLE_GUID" -d "$VARIABLE_VALUE_FILE_PATH"
 
-    # Enroll id of root filesystem key that was assigned by KBS, to OVMF.
-    printf "$K_PATH">kbs_k_path
+    # Enroll path to be used by Trustee KBS for root filesystem encryption key, to OVMF.
+    printf "$K_PATH" > kbs_k_path
     VARIABLE_NAME="KBSKPATH"
     VARIABLE_GUID="dc001d1f-60a1-4e1e-853e-42e9ab0e8b88"
     VARIABLE_VALUE_FILE_PATH="kbs_k_path"
-    python3 enroll_vars.py -i ${OVMF_OUTPUT} -o ${OVMF_OUTPUT} -n $VARIABLE_NAME -g $VARIABLE_GUID -d $VARIABLE_VALUE_FILE_PATH
+    python3 enroll_vars.py -i "${OVMF_OUTPUT}" -o "${OVMF_OUTPUT}" -n "$VARIABLE_NAME" -g "$VARIABLE_GUID" -d "$VARIABLE_VALUE_FILE_PATH"
 
     rm -rf kbs_url kbs_k_path
 
@@ -330,17 +331,18 @@ function create_partitions() {
     # Note that Root FS has to be defined last, because it used the remaining size.
     # Note that the install script later installs GRUB in the BIOS partition
     sgdisk --clear \
-        --new ${NUM_BIOS_PART}::+1M --typecode=${NUM_BIOS_PART}:ef02 --change-name=${NUM_BIOS_PART}:'bios' \
-        --new ${NUM_UEFI_PART}::+100M --typecode=${NUM_UEFI_PART}:ef00 --change-name=${NUM_UEFI_PART}:'uefi' \
-        --new ${NUM_BOOT_PART}::+$SIZE_PART_BOOT --typecode=${NUM_BOOT_PART}:8300 --change-name=${NUM_BOOT_PART}:'boot' \
-        --new ${NUM_ROOTFS_PART}::-0 --typecode=${NUM_ROOTFS_PART}:8300 --change-name=${NUM_ROOTFS_PART}:'rootfs' \
-        $PATH_IMAGE
+        --new "${NUM_BIOS_PART}::+1M" --typecode="${NUM_BIOS_PART}:ef02" --change-name="${NUM_BIOS_PART}:'bios'" \
+        --new "${NUM_UEFI_PART}::+100M" --typecode="${NUM_UEFI_PART}:ef00" --change-name="${NUM_UEFI_PART}:'uefi'" \
+        --new "${NUM_BOOT_PART}::+$SIZE_PART_BOOT" --typecode="${NUM_BOOT_PART}:8300" --change-name="${NUM_BOOT_PART}:'boot'" \
+        --new "${NUM_ROOTFS_PART}::-0" --typecode="${NUM_ROOTFS_PART}:8300" --change-name="${NUM_ROOTFS_PART}:'rootfs'" \
+        "$PATH_IMAGE"
 
     # Find an unused loop device and attach the image to it.
-    local LOOPDEV=$(losetup --find --show $PATH_IMAGE)
+    local LOOPDEV
+    LOOPDEV=$(losetup --find --show "$PATH_IMAGE")
 
     # Inform the operating system kernel of partition table changes of the image file.
-    partprobe ${LOOPDEV}
+    partprobe "${LOOPDEV}"
 
     # Return info about used loop device and name of created partitions.
     echo "${LOOPDEV}|${LOOPDEV}p${NUM_UEFI_PART}|${LOOPDEV}p${NUM_BOOT_PART}|${LOOPDEV}p${NUM_ROOTFS_PART}"
@@ -361,14 +363,14 @@ function create_luks_partition() {
     # Decode hex-encoded key, and set up an encrypted partition using LUKS2 with AES-GCM encryption using a 256bit key and AEAD for integrity protection.
     echo -n "$KEY_HEX" | xxd -r -p |
         cryptsetup -v -q luksFormat --encrypt --type luks2 \
-            --cipher aes-gcm-random --integrity aead --key-size 256 $PART
+            --cipher aes-gcm-random --integrity aead --key-size 256 "$PART"
 
     # Set a label for the encrypted partition
-    cryptsetup -v config --label $LABEL_PART_ENC $PART
+    cryptsetup -v config --label "$LABEL_PART_ENC" "$PART"
 
     # Decode hex-encoded key, and open the encrypted partition creating a virtual device providing decrypted access to encrypted partition.
     echo -n "$KEY_HEX" | xxd -r -p |
-        cryptsetup luksOpen --key-size 256 $PART "${LABEL_DEV_DEC}"
+        cryptsetup luksOpen --key-size 256 "$PART" "${LABEL_DEV_DEC}"
 
     # Print/return path of virtual device providing decrypted access to encrypted partition.
     echo "/dev/mapper/${LABEL_DEV_DEC}"
@@ -385,14 +387,14 @@ function format_partitions() {
     local DEV_ROOTFS_DEC=$3
 
     # Create filesystems for EFI partition.
-    mkfs.fat -F32 $PART_EFI
+    mkfs.fat -F32 "$PART_EFI"
 
     # Relabel because fat formatting cleared ext label.
-    fatlabel $PART_EFI uefi
+    fatlabel "$PART_EFI" uefi
 
     # Format boot partition and device with access to encrypted root partition.
-    mkfs.ext4 -F -L "boot" $PART_BOOT
-    mkfs.ext4 -F $DEV_ROOTFS_DEC
+    mkfs.ext4 -F -L "boot" "$PART_BOOT"
+    mkfs.ext4 -F "$DEV_ROOTFS_DEC"
 }
 
 # This function creates the root filesystem in virtual device providing decrypted access to encrypted root partition.
@@ -419,23 +421,24 @@ function fill_rootfs() {
     fi
 
     # Create temporary directory and mount virtual device providing decrypted access to encrypted root partition to this directory.
-    mkdir -p ${PATH_MNT_ROOTFS}
-    mount "$DEV_ROOTFS_DEC" ${PATH_MNT_ROOTFS}
+    mkdir -p "${PATH_MNT_ROOTFS}"
+    mount "$DEV_ROOTFS_DEC" "${PATH_MNT_ROOTFS}"
 
     # Mount the boot partition inside the "boot" folder of the root partition.
-    mkdir -p ${PATH_MNT_BOOT}
-    mount $PART_BOOT ${PATH_MNT_BOOT}/
+    mkdir -p "${PATH_MNT_BOOT}"
+    mount "$PART_BOOT" "${PATH_MNT_BOOT}/"
 
     # Mount the efi partition inside the "boot/efi" folder of the root partition.
-    mkdir -p ${PATH_MNT_EFI}
-    mount $PART_EFI ${PATH_MNT_EFI}
+    mkdir -p "${PATH_MNT_EFI}"
+    mount "$PART_EFI" "${PATH_MNT_EFI}"
 
     # Cleanup files that are not needed
-    rm -rf ${PATH_MNT_ROOTFS}/lost+found
-    rm -rf ${PATH_MNT_ROOTFS}/boot/lost+found
+    rm -rf "${PATH_MNT_ROOTFS}/lost+found"
+    rm -rf "${PATH_MNT_ROOTFS}/boot/lost+found"
 
     # Find the first unused network block device (nbd) and bind the base image to it.
     local UNUSED_DEV_NBD=""
+    local TMP_DEV_NBD
     for TMP_DEV_NBD in /dev/nbd{0..15}; do
         # Check device is unused: not in /proc/mounts, no partition p1, and no partitions in lsblk
         if ! grep -q "$TMP_DEV_NBD" /proc/mounts \
@@ -456,68 +459,72 @@ function fill_rootfs() {
     sleep 3
 
     # Create a temporary directory that is used to mount partitions from the base image to.
-    mkdir -p ${PATH_MNT_NBT}
+    mkdir -p "${PATH_MNT_NBT}"
 
-    mount ${UNUSED_DEV_NBD}p1 ${PATH_MNT_NBT}
+    mount "${UNUSED_DEV_NBD}p1" "${PATH_MNT_NBT}"
     # Detect Ubuntu version to use that to rename initrd and vmlinuz files later.
-    local UBUNTU_VERSION=$(grep DISTRIB_RELEASE ${PATH_MNT_NBT}/etc/lsb-release | cut -d'=' -f2)
+    local UBUNTU_VERSION
+    UBUNTU_VERSION=$(grep DISTRIB_RELEASE "${PATH_MNT_NBT}/etc/lsb-release" | cut -d'=' -f2)
     # Copy the content of rootfs partition from base image to the rootfs partition.
-    cp -rfp ${PATH_MNT_NBT}/* ${PATH_MNT_ROOTFS}
-    umount ${PATH_MNT_NBT}
+    cp -rfp "${PATH_MNT_NBT}"/* "${PATH_MNT_ROOTFS}"
+    umount "${PATH_MNT_NBT}"
 
     # Copy the content of the 16th partition of the base image to the boot directory in the root partition.
-    mount ${UNUSED_DEV_NBD}p16 ${PATH_MNT_NBT}
-    cp -rf ${PATH_MNT_NBT}/* ${PATH_MNT_BOOT}
-    umount ${PATH_MNT_NBT}
+    mount "${UNUSED_DEV_NBD}p16" "${PATH_MNT_NBT}"
+    cp -rf "${PATH_MNT_NBT}"/* "${PATH_MNT_BOOT}"
+    umount "${PATH_MNT_NBT}"
 
     # Disconnect base image from nbd
-    qemu-nbd --disconnect ${UNUSED_DEV_NBD}
+    qemu-nbd --disconnect "${UNUSED_DEV_NBD}"
 
     # Copy FDE solution binaries into the root partition.
-    pushd ${MY_PATH}/../../fde-binaries/
-    cp target/release/fde-decrypt-image ${PATH_MNT_ROOTFS}/sbin/
+    pushd "${MY_PATH}/../../fde-binaries/"
+    cp target/release/fde-decrypt-image "${PATH_MNT_ROOTFS}/sbin/"
     popd
 
     # Copy initramfs scripts, initramfs modules, and initramfs hooks into the root partition.
     pushd initramfs
     cp scripts/init-premount/fde-agent \
-        ${PATH_MNT_ROOTFS}/usr/share/initramfs-tools/scripts/init-premount/
-    cp modules ${PATH_MNT_ROOTFS}/etc/initramfs-tools/
-    cp -r hooks/* ${PATH_MNT_ROOTFS}/usr/share/initramfs-tools/hooks/
+        "${PATH_MNT_ROOTFS}/usr/share/initramfs-tools/scripts/init-premount/"
+    cp modules "${PATH_MNT_ROOTFS}/etc/initramfs-tools/"
+    cp -r hooks/* "${PATH_MNT_ROOTFS}/usr/share/initramfs-tools/hooks/"
     popd
 
     # Copy a netplan into the root partition.
-    cp netplan.yaml ${PATH_MNT_ROOTFS}/etc/netplan
+    cp netplan.yaml "${PATH_MNT_ROOTFS}/etc/netplan"
 
     # Copy KBS certificate into the root partition.
     cp "$KBS_CERT_PATH" "${PATH_MNT_ROOTFS}/etc/kbs.crt"
 
     # Provide the necessary system interfaces and directories within the chroot environment.
-    mount -t proc none ${PATH_MNT_ROOTFS}/proc
-    mount -t sysfs none ${PATH_MNT_ROOTFS}/sys
-    mount -t tmpfs none ${PATH_MNT_ROOTFS}/tmp
-    mount --bind /run ${PATH_MNT_ROOTFS}/run
-    mount --bind /dev ${PATH_MNT_ROOTFS}/dev
-    mount --bind /dev/pts ${PATH_MNT_ROOTFS}/dev/pts
+    mount -t proc none "${PATH_MNT_ROOTFS}/proc"
+    mount -t sysfs none "${PATH_MNT_ROOTFS}/sys"
+    mount -t tmpfs none "${PATH_MNT_ROOTFS}/tmp"
+    mount --bind /run "${PATH_MNT_ROOTFS}/run"
+    mount --bind /dev "${PATH_MNT_ROOTFS}/dev"
+    mount --bind /dev/pts "${PATH_MNT_ROOTFS}/dev/pts"
 
     # Copy installation script into root partition, execute it, and remove it.
-    cp scripts/install ${PATH_MNT_ROOTFS}/tmp/
-    chroot ${PATH_MNT_ROOTFS}/ /bin/bash tmp/install "$PART_ROOTFS" "$LABEL_PART_ROOTFS_ENC" "$LABEL_DEV_ROOTFS_DEC"
-    rm ${PATH_MNT_ROOTFS}/tmp/install
+    cp scripts/install "${PATH_MNT_ROOTFS}/tmp/"
+    chroot "${PATH_MNT_ROOTFS}/" /bin/bash tmp/install "$PART_ROOTFS" "$LABEL_PART_ROOTFS_ENC" "$LABEL_DEV_ROOTFS_DEC"
+    rm "${PATH_MNT_ROOTFS}/tmp/install"
 
     echo "=============== Direct Boot LUKS Settings ============="
-    echo "export UUID=$(cryptsetup luksUUID $PART_ROOTFS)"
+    local LUKS_UUID
+    LUKS_UUID=$(cryptsetup luksUUID "$PART_ROOTFS")
+    echo "export UUID=$LUKS_UUID"
     echo "export label=$LABEL_DEV_ROOTFS_DEC"
 
     # Extract initrd and vmlinuz.
-    mkdir -p ${MY_PATH}
+    mkdir -p "${MY_PATH}"
     # Find the kernel version by looking for vmlinuz files in the boot directory and sorting them.
-    KERNEL_VERSION=$(find ${PATH_MNT_ROOTFS}/boot/vmlinuz-*-generic 2>/dev/null \
-        | ${PATH_MNT_ROOTFS}/usr/lib/grub/grub-sort-version -r 2>/dev/null \
+    local KERNEL_VERSION
+    KERNEL_VERSION=$(find "${PATH_MNT_ROOTFS}/boot/" -name "vmlinuz-*-generic" 2>/dev/null \
+        | "${PATH_MNT_ROOTFS}/usr/lib/grub/grub-sort-version" -r 2>/dev/null \
         | gawk 'match($0 , /^.*\/vmlinuz-(.*)/, a) {print a[1];exit}')
     
-    INITRD_PATH="${PATH_MNT_ROOTFS}/boot/initrd.img-${KERNEL_VERSION}"
-    VMLINUZ_PATH="${PATH_MNT_ROOTFS}/boot/vmlinuz-${KERNEL_VERSION}"    
+    local INITRD_PATH="${PATH_MNT_ROOTFS}/boot/initrd.img-${KERNEL_VERSION}"
+    local VMLINUZ_PATH="${PATH_MNT_ROOTFS}/boot/vmlinuz-${KERNEL_VERSION}"
 
     if [[ -f "$INITRD_PATH" && -f "$VMLINUZ_PATH" ]]; then
         if [[ -z "$UBUNTU_VERSION" ]]; then
@@ -530,30 +537,30 @@ function fill_rootfs() {
         echo "initrd.img-${UBUNTU_VERSION} & vmlinuz-${UBUNTU_VERSION} copied and placed in ${MY_PATH}"
     else
         echo "Error: Kernel or initrd file not found for version ${KERNEL_VERSION}"
-        ls ${PATH_MNT_ROOTFS}/boot/
+        ls "${PATH_MNT_ROOTFS}/boot/"
 
-        umount ${PATH_MNT_ROOTFS}/dev/pts
-        umount ${PATH_MNT_ROOTFS}/dev
-        umount ${PATH_MNT_ROOTFS}/run
-        umount ${PATH_MNT_ROOTFS}/tmp
-        umount -l ${PATH_MNT_ROOTFS}/sys
-        umount ${PATH_MNT_ROOTFS}/proc
-        umount ${PATH_MNT_EFI}
-        umount ${PATH_MNT_BOOT}
-        umount -l ${PATH_MNT_ROOTFS}/
+        umount "${PATH_MNT_ROOTFS}/dev/pts"
+        umount "${PATH_MNT_ROOTFS}/dev"
+        umount "${PATH_MNT_ROOTFS}/run"
+        umount "${PATH_MNT_ROOTFS}/tmp"
+        umount -l "${PATH_MNT_ROOTFS}/sys"
+        umount "${PATH_MNT_ROOTFS}/proc"
+        umount "${PATH_MNT_EFI}"
+        umount "${PATH_MNT_BOOT}"
+        umount -l "${PATH_MNT_ROOTFS}/"
         exit 1
     fi
 
     # Clean up mount points
-    umount ${PATH_MNT_ROOTFS}/dev/pts
-    umount ${PATH_MNT_ROOTFS}/dev
-    umount ${PATH_MNT_ROOTFS}/run
-    umount ${PATH_MNT_ROOTFS}/tmp
-    umount -l ${PATH_MNT_ROOTFS}/sys
-    umount ${PATH_MNT_ROOTFS}/proc
-    umount ${PATH_MNT_EFI}
-    umount ${PATH_MNT_BOOT}
-    umount -l ${PATH_MNT_ROOTFS}/
+    umount "${PATH_MNT_ROOTFS}/dev/pts"
+    umount "${PATH_MNT_ROOTFS}/dev"
+    umount "${PATH_MNT_ROOTFS}/run"
+    umount "${PATH_MNT_ROOTFS}/tmp"
+    umount -l "${PATH_MNT_ROOTFS}/sys"
+    umount "${PATH_MNT_ROOTFS}/proc"
+    umount "${PATH_MNT_EFI}"
+    umount "${PATH_MNT_BOOT}"
+    umount -l "${PATH_MNT_ROOTFS}/"
 }
 
 function close_partitions() {
@@ -561,10 +568,10 @@ function close_partitions() {
     local LOOPDEV=$2
 
     # Close virtual device providing decrypted access to root partition.
-    cryptsetup close $DEV_ROOTFS_DEC
+    cryptsetup close "$DEV_ROOTFS_DEC"
 
     # Detach loop device .
-    losetup -d $LOOPDEV
+    losetup -d "$LOOPDEV"
 }
 
 # Calculate the size of the output image based on specified partition size and create an empty image file of that size.
@@ -575,7 +582,8 @@ function create_image() {
 
     # Calculate total image size in bytes based on defined size values.
     # Reserve 1MB for BIOS and 100MB for EFI.
-    local SIZE_IMAGE=$(echo "($SIZE_PART_ROOTFS+$SIZE_PART_BOOT+101MB)" |
+    local SIZE_IMAGE
+    SIZE_IMAGE=$(echo "($SIZE_PART_ROOTFS+$SIZE_PART_BOOT+101MB)" |
         sed -e 's/KB/\*1024/g' -e 's/MB/\*1048576/g' -e 's/GB/\*1073741824/g' | bc)
 
     # Create empty image file of calculated size to represent output disk
@@ -653,21 +661,21 @@ check_args_env
 # Setup trap to catch interruptions
 trap cleanup_on_interrupt SIGINT SIGTERM 
 
-OVMF_INPUT=${MY_PATH}/../../data/ovmf-extracted/usr/share/ovmf/OVMF.tdx.fd
-OVMF_OUTPUT=OVMF_FDE.fd
+OVMF_INPUT="${MY_PATH}/../../data/ovmf-extracted/usr/share/ovmf/OVMF.tdx.fd"
+OVMF_OUTPUT="OVMF_FDE.fd"
 
 # Main script execution
 handle_get_quote "$@"
 
 echo "=============== Set Owner of Created OVMF and TD Image ============="
 USER_GROUP=$(id -gn "$LOGIN_USER")
-chown $LOGIN_USER:$USER_GROUP $OVMF_OUTPUT
-chown $LOGIN_USER:$USER_GROUP $PATH_IMG_OUT
+chown "$LOGIN_USER":"$USER_GROUP" "$OVMF_OUTPUT"
+chown "$LOGIN_USER":"$USER_GROUP" "$PATH_IMG_OUT"
 
 # Output full paths of the created files
 echo "=============== Created Files ================"
-echo "OVMF_PATH: $(realpath $OVMF_OUTPUT)"
-echo "IMAGE_PATH: $(realpath $PATH_IMG_OUT)"
+echo "OVMF_PATH: $(realpath "$OVMF_OUTPUT")"
+echo "IMAGE_PATH: $(realpath "$PATH_IMG_OUT")"
 
 echo "=============== Build End ================"
 
